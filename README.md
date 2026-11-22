@@ -100,8 +100,11 @@ decode byte`), используйте новый Windows-пакет целико
 Install Visual Studio 2022 with C++ workload, CMake >= 3.24 and Qt 6.x (MSVC 2022 64-bit, OpenGLWidgets module). Then double-click **`build_windows.bat`** in the repository root; it detects Qt from `CMAKE_PREFIX_PATH`, `QTDIR`, or `C:\Qt\6.x\msvc2022_64`, compiles Release and deploys DLLs to **`dist\PanoramaEdit\PanoramaEdit.exe`**.
 
 При первой сборке CMake автоматически скачает официальный NuGet-пакет
-`Microsoft.ML.OnnxRuntime.DirectML` (версия 1.24.4), после чего батник положит
-его нативные DLL рядом с `.exe`. Python и pip в процессе сборки не нужны.
+`Microsoft.ML.OnnxRuntime.DirectML` (версия 1.24.4) и отдельный redistributable
+`Microsoft.AI.DirectML` (1.15.4). Батник положит `onnxruntime.dll`,
+`onnxruntime_providers_shared.dll` и **`DirectML.dll`** рядом с `.exe`.
+Второй пакет довольно большой и загружается только при первой сборке.
+Python и pip не нужны.
 
 Alternatively, build manually (replace Qt path as needed):
 

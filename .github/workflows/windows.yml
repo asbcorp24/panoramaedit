@@ -36,6 +36,9 @@ jobs:
           cmake --install build --config Release --prefix package
           windeployqt --release --compiler-runtime package/PanoramaEdit.exe
           Copy-Item ai/setup_ai_windows.bat package/setup_ai_windows.bat
+          foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
+            if (!(Test-Path "package/$dll")) { throw "Missing native AI DLL: $dll" }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: PanoramaEdit-Windows-x64

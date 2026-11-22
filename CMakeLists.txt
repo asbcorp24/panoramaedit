@@ -30,6 +30,24 @@ if(WIN32)
     if(NOT ORT_RUNTIME_DLLS)
         message(FATAL_ERROR "ONNX Runtime DLLs missing in ${ORT_NATIVE_DIR}")
     endif()
+
+    # ONNX Runtime's DirectML NuGet package does not bundle DirectML.dll.
+    # Ship Microsoft's redistributable beside the EXE so GPU support does not
+    # depend on whichever (possibly older) copy Windows happens to provide.
+    set(PANORAMAEDIT_DML_DIR "" CACHE PATH "Extracted Microsoft.AI.DirectML NuGet package")
+    if(NOT PANORAMAEDIT_DML_DIR)
+        include(FetchContent)
+        FetchContent_Declare(directml_redist
+            URL "https://www.nuget.org/api/v2/package/Microsoft.AI.DirectML/1.15.4"
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(directml_redist)
+        set(PANORAMAEDIT_DML_DIR "${directml_redist_SOURCE_DIR}")
+    endif()
+    set(DIRECTML_DLL "${PANORAMAEDIT_DML_DIR}/bin/x64-win/DirectML.dll")
+    if(NOT EXISTS "${DIRECTML_DLL}")
+        message(FATAL_ERROR "DirectML redistributable missing: ${DIRECTML_DLL}")
+    endif()
+    list(APPEND ORT_RUNTIME_DLLS "${DIRECTML_DLL}")
     install(FILES ${ORT_RUNTIME_DLLS} DESTINATION .)
 endif()
 
