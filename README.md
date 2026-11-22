@@ -28,19 +28,25 @@ Native Windows editor for equirectangular 360° × 180° panoramas (2:1), based 
 - **ИИ-дорисовка (`J`)** — LaMa для реконструкции текстур по окружению (~208 МБ).
 
 **Подготовка один раз:** после сборки/скачивания Windows-пакета откройте папку
-с `PanoramaEdit.exe` и запустите **`setup_ai_windows.bat`**. Понадобятся Python
-3.11/3.12 и интернет *только на этапе установки*: скрипт создаст изолированное
-окружение `ai_runtime`, установит ONNX Runtime DirectML, NumPy и Pillow,
-скачает веса в `models/`. **Сама обработка полностью локальная и не отправляет
-изображения в сеть.** Если модель или среда отсутствует, основной редактор
-продолжает работать, а инструмент покажет инструкцию по установке.
+с `PanoramaEdit.exe` и запустите **`setup_ai_windows.bat`**. **Python не нужен**:
+все DLL ONNX Runtime и DirectML уже входят в Windows-пакет. Интернет требуется
+*только на этапе первой загрузки моделей*: установщик скачает веса в `models/`
+и проверит их через встроенный C++-движок. **Обработка полностью локальная,
+изображения никуда не отправляются.** Если модель отсутствует, основной редактор
+продолжит работать и покажет инструкцию по установке.
 
 Если использовали старую версию с NAFNet FP16 (~33 МБ) и видели ошибку
 `Type parameter (T) ... tensor(float) and tensor(float16)`, повторно запустите
 **обновлённый `setup_ai_windows.bat`** из новой сборки. Установщик сохранит
 старый несовместимый файл под другим именем, скачает FP32 (~69 МБ) и **проверит,
-что ONNX Runtime действительно открывает обе модели**. Не нужно заново
+что встроенный ONNX Runtime действительно открывает обе модели**. Не нужно заново
 скачивать LaMa, если её файл уже исправен.
+
+Если в старой сборке возникала ошибка кодировки Python (`utf-8 codec can't
+decode byte`), используйте новый Windows-пакет целиком: сейчас обработка идёт
+напрямую в C++ и больше не вызывает `ai_worker.py` или Python-интерпретатор.
+Перенесите папку `models/` из предыдущей установки, чтобы не скачивать веса
+повторно. Старую `ai_runtime/` можно удалить после проверки новой сборки.
 
 **Как использовать:** выберите один из двух инструментов, левой кнопкой
 закрасьте область прямо на сфере (она подсвечивается голубым), затем нажмите
@@ -50,6 +56,10 @@ Native Windows editor for equirectangular 360° × 180° panoramas (2:1), based 
 блокируется вычислениями: есть индикатор и отмена задачи. Для небольшого
 расхода видеопамяти обрабатываются только фрагменты до **1024×1024** с
 окружением; крупные области восстанавливайте несколькими проходами.
+
+Движок пытается использовать **DirectML (GPU)**, при несовместимости драйвера
+или операции переключается на **CPU**. Модели переиспользуются между
+обработками; повторная операция не требует загрузки весов с диска.
 
 **Шов панорамы:** маска ИИ и фрагмент изображения циклически переходят с
 правого края на левый, поэтому область около 0°/360° отправляется в модель
@@ -89,11 +99,16 @@ Native Windows editor for equirectangular 360° × 180° panoramas (2:1), based 
 
 Install Visual Studio 2022 with C++ workload, CMake >= 3.24 and Qt 6.x (MSVC 2022 64-bit, OpenGLWidgets module). Then double-click **`build_windows.bat`** in the repository root; it detects Qt from `CMAKE_PREFIX_PATH`, `QTDIR`, or `C:\Qt\6.x\msvc2022_64`, compiles Release and deploys DLLs to **`dist\PanoramaEdit\PanoramaEdit.exe`**.
 
+При первой сборке CMake автоматически скачает официальный NuGet-пакет
+`Microsoft.ML.OnnxRuntime.DirectML` (версия 1.24.4), после чего батник положит
+его нативные DLL рядом с `.exe`. Python и pip в процессе сборки не нужны.
+
 Alternatively, build manually (replace Qt path as needed):
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64"
 cmake --build build --config Release
+cmake --install build --config Release --prefix dist/PanoramaEdit
 ```
 
 For deploying Qt DLLs next to the executable, run Qt's `windeployqt` on `build/Release/PanoramaEdit.exe` (or use the GitHub Actions workflow which handles this).

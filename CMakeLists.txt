@@ -4,13 +4,53 @@ project(PanoramaEdit VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent)
 qt_standard_project_setup()
+
+# The Windows package includes native ONNX Runtime + DirectML. Models are
+# downloaded separately once, and inference never needs Python.
+add_library(PanoramaEditOrt INTERFACE)
+if(WIN32)
+    set(PANORAMAEDIT_ONNX_DIR "" CACHE PATH "Extracted Microsoft.ML.OnnxRuntime.DirectML NuGet package")
+    if(NOT PANORAMAEDIT_ONNX_DIR)
+        include(FetchContent)
+        FetchContent_Declare(onnxruntime_directml
+            URL "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime.DirectML/1.24.4"
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(onnxruntime_directml)
+        set(PANORAMAEDIT_ONNX_DIR "${onnxruntime_directml_SOURCE_DIR}")
+    endif()
+    set(ORT_NATIVE_DIR "${PANORAMAEDIT_ONNX_DIR}/runtimes/win-x64/native")
+    if(NOT EXISTS "${ORT_NATIVE_DIR}/onnxruntime.lib")
+        message(FATAL_ERROR "ONNX Runtime import library missing: ${ORT_NATIVE_DIR}/onnxruntime.lib")
+    endif()
+    target_include_directories(PanoramaEditOrt INTERFACE "${PANORAMAEDIT_ONNX_DIR}/build/native/include")
+    target_link_libraries(PanoramaEditOrt INTERFACE "${ORT_NATIVE_DIR}/onnxruntime.lib")
+    file(GLOB ORT_RUNTIME_DLLS "${ORT_NATIVE_DIR}/*.dll")
+    if(NOT ORT_RUNTIME_DLLS)
+        message(FATAL_ERROR "ONNX Runtime DLLs missing in ${ORT_NATIVE_DIR}")
+    endif()
+    install(FILES ${ORT_RUNTIME_DLLS} DESTINATION .)
+endif()
+
+function(configure_native_ai target)
+    target_link_libraries(${target} PRIVATE PanoramaEditOrt)
+    if(WIN32)
+        foreach(runtime_dll IN LISTS ORT_RUNTIME_DLLS)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${runtime_dll}" "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM)
+        endforeach()
+    endif()
+endfunction()
 
 qt_add_executable(PanoramaEdit WIN32
     src/main.cpp
     src/MainWindow.h
     src/MainWindow.cpp
+    src/AiEngine.h
+    src/AiEngine.cpp
     src/SphereView.h
     src/SphereView.cpp
     src/SphericalLiquify.h
@@ -20,7 +60,8 @@ qt_add_executable(PanoramaEdit WIN32
     src/SphericalRaster.h
     src/SphericalRaster.cpp
 )
-target_link_libraries(PanoramaEdit PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets)
+target_link_libraries(PanoramaEdit PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)
+configure_native_ai(PanoramaEdit)
 set_target_properties(PanoramaEdit PROPERTIES WIN32_EXECUTABLE TRUE)
 install(TARGETS PanoramaEdit RUNTIME DESTINATION .)
 
@@ -48,10 +89,21 @@ if(BUILD_TESTING)
     target_link_libraries(PanoramaEditAITests PRIVATE Qt6::Gui)
     add_test(NAME SphericalAI COMMAND PanoramaEditAITests)
 
+    add_executable(PanoramaEditNativeAiTests
+        tests/NativeAiTests.cpp
+        src/AiEngine.h
+        src/AiEngine.cpp
+    )
+    target_link_libraries(PanoramaEditNativeAiTests PRIVATE Qt6::Gui)
+    configure_native_ai(PanoramaEditNativeAiTests)
+    add_test(NAME NativeAI COMMAND PanoramaEditNativeAiTests)
+
     add_executable(PanoramaEditPaletteTests
         tests/ToolsPaletteTests.cpp
         src/MainWindow.h
         src/MainWindow.cpp
+        src/AiEngine.h
+        src/AiEngine.cpp
         src/SphereView.h
         src/SphereView.cpp
         src/SphericalLiquify.h
@@ -62,7 +114,8 @@ if(BUILD_TESTING)
         src/SphericalRaster.cpp
     )
     target_link_libraries(PanoramaEditPaletteTests PRIVATE
-        Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets)
+        Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)
+    configure_native_ai(PanoramaEditPaletteTests)
     add_test(NAME ToolsPalette COMMAND PanoramaEditPaletteTests)
     set_tests_properties(ToolsPalette PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

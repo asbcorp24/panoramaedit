@@ -1,12 +1,14 @@
 #pragma once
 #include <QMainWindow>
 #include <QString>
+#include "AiEngine.h"
+
+template <typename T> class QFutureWatcher;
 
 class SphereView;
 class QAction;
 class QLabel;
 class QPushButton;
-class QProcess;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -27,5 +29,5 @@ private:
     QAction *stampAction_ = nullptr;
     QLabel *statusLabel_ = nullptr;
     QPushButton *applyAiButton_ = nullptr;
-    QProcess *aiProcess_ = nullptr;
+    QFutureWatcher<AiEngine::Result> *aiWatcher_ = nullptr;
 };

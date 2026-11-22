@@ -23,13 +23,18 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test spherical raster
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Test native NAFNet inference
+        shell: pwsh
+        run: |
+          curl.exe -fL --retry 3 --output "$env:RUNNER_TEMP/nafnet-test.onnx" "https://raw.githubusercontent.com/rock1110/nafnet-onnx/main/nafnet-width32-gopro-fp32.onnx"
+          if ($LASTEXITCODE -ne 0) { throw 'NAFNet model download failed' }
+          & build/Release/PanoramaEditNativeAiTests.exe "$env:RUNNER_TEMP/nafnet-test.onnx"
+          if ($LASTEXITCODE -ne 0) { throw 'Native ONNX Runtime inference failed' }
       - name: Deploy Qt
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item build/Release/PanoramaEdit.exe package/
+          cmake --install build --config Release --prefix package
           windeployqt --release --compiler-runtime package/PanoramaEdit.exe
-          Copy-Item ai/ai_worker.py package/ai_worker.py
           Copy-Item ai/setup_ai_windows.bat package/setup_ai_windows.bat
       - uses: actions/upload-artifact@v4
         with:

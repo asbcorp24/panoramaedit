@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "SphereView.h"
+#include "AiEngine.h"
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -9,21 +10,22 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QProcess>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
 #include <QTimer>
-#include <QTemporaryDir>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QtConcurrent>
+#include <atomic>
 #include <memory>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -223,7 +225,7 @@ void MainWindow::openFile() {
 }
 
 void MainWindow::startAiRestoration() {
-    if (aiProcess_) return;
+    if (aiWatcher_) return;
     const SphereView::Mode mode = view_->mode();
     if (mode != SphereView::Mode::AiSharpen && mode != SphereView::Mode::AiInpaint) {
         QMessageBox::information(this, tr("ИИ-восстановление"),
@@ -242,31 +244,15 @@ void MainWindow::startAiRestoration() {
     const QString applicationPath = QCoreApplication::applicationDirPath();
     const QString model = applicationPath + (mode == SphereView::Mode::AiSharpen
         ? "/models/deblur.onnx" : "/models/inpaint.onnx");
-    const QString python = applicationPath + "/ai_runtime/Scripts/python.exe";
-    const QString script = applicationPath + "/ai_worker.py";
-    if (!QFileInfo::exists(model) || !QFileInfo::exists(python) || !QFileInfo::exists(script)) {
+    if (!QFileInfo::exists(model)) {
         QMessageBox::warning(this, tr("ИИ ещё не установлен"),
             tr("Для локального ИИ один раз запустите «setup_ai_windows.bat» "
-               "рядом с PanoramaEdit.exe. Он установит среду и две модели. "
+               "рядом с PanoramaEdit.exe. Он скачает модели без установки Python. "
                "После этого интернет для обработки панорам не нужен."));
         return;
     }
-
-    auto temporary = std::make_shared<QTemporaryDir>();
-    if (!temporary->isValid()) {
-        QMessageBox::warning(this, tr("Ошибка ИИ"), tr("Не удалось создать временную папку."));
-        return;
-    }
-    const QString input = temporary->filePath("input.png");
-    const QString mask = temporary->filePath("mask.png");
-    const QString output = temporary->filePath("output.png");
-    if (!selected->image.save(input) || !selected->mask.save(mask)) {
-        QMessageBox::warning(this, tr("Ошибка ИИ"), tr("Не удалось сохранить выделенную область."));
-        return;
-    }
-
-    auto *process = new QProcess(this);
-    aiProcess_ = process;
+    auto *watcher = new QFutureWatcher<AiEngine::Result>(this);
+    aiWatcher_ = watcher;
     applyAiButton_->setEnabled(false);
     const quint64 documentId = view_->documentId();
     auto *progress = new QProgressDialog(tr("Нейросеть обрабатывает выделение офлайн..."),
@@ -275,52 +261,46 @@ void MainWindow::startAiRestoration() {
     progress->setAutoClose(false);
     progress->setAutoReset(false);
     progress->setWindowModality(Qt::ApplicationModal);
-    connect(progress, &QProgressDialog::canceled, process, &QProcess::kill);
-
-    connect(process, &QProcess::finished, this,
-        [this, process, progress, temporary, selected = std::move(*selected),
-         output, documentId](int code, QProcess::ExitStatus status) {
-        if (aiProcess_ != process) return;
-        const bool canceled = progress->wasCanceled();
+    auto canceled = std::make_shared<std::atomic_bool>(false);
+    connect(progress, &QProgressDialog::canceled, watcher,
+            [canceled] { canceled->store(true, std::memory_order_relaxed); });
+    // Preserve the image data before moving the patch to the completion callback.
+    const QImage aiImage = selected->image;
+    const QImage aiMask = selected->mask;
+    connect(watcher, &QFutureWatcher<AiEngine::Result>::finished, this,
+        [this, watcher, progress, selected = std::move(*selected),
+         canceled, documentId]() mutable {
+        if (aiWatcher_ != watcher) return;
+        const bool wasCanceled = canceled->load(std::memory_order_relaxed);
         progress->close();
         progress->deleteLater();
-        aiProcess_ = nullptr;
+        aiWatcher_ = nullptr;
         applyAiButton_->setEnabled(true);
-        if (canceled) {
+        const AiEngine::Result result = watcher->result();
+        if (wasCanceled) {
             statusBar()->showMessage(tr("ИИ-обработка отменена"), 5000);
-        } else if (status != QProcess::NormalExit || code != 0) {
-            QMessageBox::warning(this, tr("Ошибка ИИ-модели"),
-                QString::fromUtf8(process->readAll()).left(1500));
+        } else if (!result.error.isEmpty()) {
+            QMessageBox::warning(this, tr("Ошибка ИИ-модели"), result.error.left(2000));
         } else if (documentId != view_->documentId()) {
             statusBar()->showMessage(tr("Панорама сменилась: старый результат ИИ отброшен"), 6000);
         } else {
-            QImage result(output);
-            if (result.isNull() || !view_->applyAiResult(selected, result)) {
+            if (result.image.isNull() || !view_->applyAiResult(selected, result.image)) {
                 QMessageBox::information(this, tr("ИИ-восстановление"),
                     tr("Модель не вернула изменений в выбранной области."));
             } else {
-                statusBar()->showMessage(tr("ИИ-восстановление применено. Ctrl+Z — отменить."), 7000);
+                statusBar()->showMessage(result.usedGpu
+                    ? tr("ИИ-восстановление через видеокарту. Ctrl+Z — отменить.")
+                    : tr("ИИ-восстановление на процессоре. Ctrl+Z — отменить."), 7000);
             }
         }
-        process->deleteLater();
+        watcher->deleteLater();
     });
-    connect(process, &QProcess::errorOccurred, this,
-        [this, process, progress](QProcess::ProcessError error) {
-        if (error != QProcess::FailedToStart || aiProcess_ != process) return;
-        progress->close();
-        progress->deleteLater();
-        aiProcess_ = nullptr;
-        applyAiButton_->setEnabled(true);
-        QMessageBox::warning(this, tr("Не удалось запустить ИИ"), process->errorString());
-        process->deleteLater();
+    const auto aiMode = mode == SphereView::Mode::AiSharpen
+        ? AiEngine::Mode::Sharpen : AiEngine::Mode::Inpaint;
+    auto future = QtConcurrent::run([aiMode, model, aiImage, aiMask, canceled] {
+        return AiEngine::run(aiMode, model, aiImage, aiMask, canceled);
     });
-    process->setProgram(python);
-    process->setArguments({script, "--mode", mode == SphereView::Mode::AiSharpen
-        ? "sharpen" : "inpaint", "--model", model, "--image", input,
-        "--mask", mask, "--output", output});
-    process->setWorkingDirectory(applicationPath);
-    process->setProcessChannelMode(QProcess::MergedChannels);
-    process->start();
+    watcher->setFuture(future);
     progress->show();
 }
 
@@ -341,6 +321,12 @@ bool MainWindow::saveFile() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    if (aiWatcher_) {
+        QMessageBox::information(this, tr("ИИ-обработка"),
+            tr("Дождитесь завершения ИИ-обработки перед закрытием редактора."));
+        event->ignore();
+        return;
+    }
     if (confirmDiscard()) event->accept();
     else event->ignore();
 }

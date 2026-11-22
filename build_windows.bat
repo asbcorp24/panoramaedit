@@ -51,7 +51,7 @@ if not exist "!EXE!" (
 )
 set "DIST=dist\PanoramaEdit"
 if not exist "!DIST!" mkdir "!DIST!"
-copy /Y "!EXE!" "!DIST!\PanoramaEdit.exe" >nul
+cmake --install build --config Release --prefix "!DIST!"
 if errorlevel 1 goto :fail
 
 set "DEPLOY=!QT_PREFIX!\bin\windeployqt.exe"
@@ -61,14 +61,13 @@ if not exist "!DEPLOY!" (
 )
 "!DEPLOY!" --release --compiler-runtime "!DIST!\PanoramaEdit.exe"
 if errorlevel 1 goto :fail
-copy /Y "ai\ai_worker.py" "!DIST!\ai_worker.py" >nul
-if errorlevel 1 goto :fail
 copy /Y "ai\setup_ai_windows.bat" "!DIST!\setup_ai_windows.bat" >nul
 if errorlevel 1 goto :fail
 
 echo.
 echo [SUCCESS] Ready: %CD%\!DIST!\PanoramaEdit.exe
-echo [OPTIONAL] To install both offline AI models, run !DIST!\setup_ai_windows.bat once.
+echo [OPTIONAL] To download offline AI models, run !DIST!\setup_ai_windows.bat once.
+echo [INFO] ONNX Runtime + DirectML DLLs are bundled. Python is not needed.
 echo.
 pause
 exit /b 0
