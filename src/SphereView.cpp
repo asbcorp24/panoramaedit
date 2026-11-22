@@ -324,7 +324,7 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
         }
         if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
             mode_ == Mode::Bloat || mode_ == Mode::Pinch)
-            liquifySnapshot_ = composite_;
+            liquifySnapshot_ = composite_.copy();
         if (mode_ != Mode::Smudge && mode_ != Mode::Push)
             paintAt(*lastStroke_);
     } else dragging_ = true;
@@ -333,6 +333,10 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
 void SphereView::mouseMoveEvent(QMouseEvent *event) {
     if (painting_ && (event->buttons() & Qt::LeftButton)) {
         const auto next = directionFromScreen(event->position());
+        // Accumulate from the last rendered result, not the stroke-start image.
+        const bool liquify = mode_ == Mode::Smudge || mode_ == Mode::Push ||
+                             mode_ == Mode::Bloat || mode_ == Mode::Pinch;
+        if (liquify) liquifySnapshot_ = composite_.copy();
         if (lastStroke_) strokeBetween(*lastStroke_, next);
         else paintAt(next);
         lastStroke_ = next;
