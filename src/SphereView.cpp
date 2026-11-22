@@ -100,14 +100,24 @@ void SphereView::initializeGL() {
 layout(location=0) in vec3 inPosition;
 layout(location=1) in vec2 inUV;
 out vec2 vUV;
+out vec3 vDirection;
 uniform mat4 uMVP;
-void main() { vUV = inUV; gl_Position = uMVP * vec4(inPosition, 1.0); }
+void main() { vUV = inUV; vDirection = inPosition; gl_Position = uMVP * vec4(inPosition, 1.0); }
 )";
     const char *fs = R"(#version 330 core
 in vec2 vUV;
+in vec3 vDirection;
 out vec4 fragColor;
 uniform sampler2D uPanorama;
-void main() { fragColor = texture(uPanorama, vUV); }
+const float PI = 3.14159265358979323846;
+void main() {
+    vec3 d = normalize(vDirection);
+    float u = 0.5 + atan(d.x, -d.z) / (2.0 * PI);
+    // QImage bytes are uploaded top-row-first. In OpenGL that row has v=0.
+    // North (+Y) must therefore sample v=0, not v=1.
+    float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI;
+    fragColor = texture(uPanorama, vec2(u, v));
+}
 )";
     if (!shader_->addShaderFromSourceCode(QOpenGLShader::Vertex, vs) ||
         !shader_->addShaderFromSourceCode(QOpenGLShader::Fragment, fs) ||
