@@ -31,4 +31,20 @@ if(BUILD_TESTING)
     )
     target_link_libraries(PanoramaEditRasterTests PRIVATE Qt6::Gui)
     add_test(NAME SphereRaster COMMAND PanoramaEditRasterTests)
+
+    add_executable(PanoramaEditPaletteTests
+        tests/ToolsPaletteTests.cpp
+        src/MainWindow.h
+        src/MainWindow.cpp
+        src/SphereView.h
+        src/SphereView.cpp
+        src/SphericalLiquify.h
+        src/SphericalLiquify.cpp
+        src/SphericalRaster.h
+        src/SphericalRaster.cpp
+    )
+    target_link_libraries(PanoramaEditPaletteTests PRIVATE
+        Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets)
+    add_test(NAME ToolsPalette COMMAND PanoramaEditPaletteTests)
+    set_tests_properties(ToolsPalette PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

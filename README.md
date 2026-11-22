@@ -2,6 +2,24 @@
 
 Native Windows editor for equirectangular 360° × 180° panoramas (2:1), based on C++20, Qt 6 Widgets and OpenGL.
 
+## Панель инструментов
+
+Интерфейс программы и названия инструментов переведены на русский язык.
+Панель «Инструменты» при запуске **плавает над окном**: её можно перетаскивать
+за заголовок или закрепить слева/справа. Если закрыли панель, верните её через
+**Вид → Панель инструментов**.
+
+**Радиус кисти** теперь можно задать вручную в числовом поле справа от ползунка:
+введите значение от **0,1° до 30,0°** и нажмите Enter. Поле и ползунок всегда
+показывают одно значение. Здесь используются *угловые градусы на сфере*, а не
+пиксели эквиректангульной развёртки. Сила воздействия настраивается отдельным
+ползунком от 1% до 100%.
+
+Основные кнопки: «Навигация» (`N`), «Кисть» (`B`), «Ластик» (`E`),
+«Штамп» (`S`), «Палец» (`F`), «Деформация» (`D`), «Вздутие» (`I`),
+«Сжатие» (`C`). Для поворота сферы при выбранном инструменте используйте
+правую кнопку мыши.
+
 ## Implemented
 
 - Explore from inside a 360° sphere with mouse drag and mouse wheel zoom.
@@ -10,7 +28,8 @@ Native Windows editor for equirectangular 360° × 180° panoramas (2:1), based 
 - Non-destructive raster edit layer over the opened base panorama.
 - Eraser clears edits and reveals original pixels beneath.
 - Clone Stamp copies pixels from another spherical direction with a rotation-aware offset, including across the seam.
-- Brush colour and angular radius controls; Undo/Redo tracks entire strokes.
+- Brush colour, a manual numeric angular-radius field (0.1°–30°), and strength controls; Undo/Redo tracks entire strokes.
+- Movable, detachable tool palette with Russian tool labels and menus.
 - Save composited result as PNG or JPEG.
 - Partial OpenGL texture updates during editing (large panorama performance is still a work in progress).
 - Windows build artifacts from GitHub Actions.
@@ -42,7 +61,7 @@ The editor currently has one transparent edit layer, not a full Photoshop-style 
 
 ## Tests
 
-The Windows GitHub Actions workflow runs CTest after compiling. To run the same raster tests locally:
+The Windows GitHub Actions workflow runs CTest after compiling (spherical raster and tool-palette controls). To run the tests locally:
 
 ```powershell
 ctest --test-dir build -C Release --output-on-failure

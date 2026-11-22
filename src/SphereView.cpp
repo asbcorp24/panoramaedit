@@ -37,7 +37,7 @@ void SphereView::setMode(Mode mode) {
     mode_ = mode;
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
     if (mode == Mode::CloneStamp)
-        emit statusMessage(tr("Clone Stamp: Ctrl + left-click to choose source, then paint."));
+        emit statusMessage(tr("Штамп: Ctrl + щелчок левой кнопкой выбирает источник, затем рисуйте."));
 }
 void SphereView::setModified(bool modified) {
     if (modified_ == modified) return;
@@ -47,7 +47,7 @@ void SphereView::setModified(bool modified) {
 bool SphereView::openImage(const QString &path, QString *error) {
     QImage loaded(path);
     if (loaded.isNull()) {
-        if (error) *error = tr("Image could not be decoded: %1").arg(path);
+        if (error) *error = tr("Не удалось прочитать изображение: %1").arg(path);
         return false;
     }
     // Some panorama exporters round the width/height or retain a few extra
@@ -57,7 +57,7 @@ bool SphereView::openImage(const QString &path, QString *error) {
     constexpr double expectedAspect = 2.0;
     constexpr double allowedRelativeDeviation = 0.05; // 5%
     if (std::abs(aspect / expectedAspect - 1.0) > allowedRelativeDeviation) {
-        if (error) *error = tr("Expected an approximately 2:1 panorama (within 5%%), got %1 × %2.")
+        if (error) *error = tr("Ожидалась панорама с пропорцией около 2:1 (допуск 5%%), получено %1 × %2.")
             .arg(loaded.width()).arg(loaded.height());
         return false;
     }
@@ -307,10 +307,10 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton && mode_ == Mode::CloneStamp &&
         (event->modifiers() & Qt::ControlModifier) && hasImage()) {
         cloneSource_ = directionFromScreen(event->position());
-        emit statusMessage(tr("Clone source set. Left-drag to copy onto the sphere."));
+        emit statusMessage(tr("Источник штампа выбран. Проведите левой кнопкой, чтобы скопировать на сферу."));
     } else if (mode_ != Mode::Navigate && event->button() == Qt::LeftButton && hasImage()) {
         if (mode_ == Mode::CloneStamp && !cloneSource_) {
-            emit statusMessage(tr("First choose clone source with Ctrl + left-click."));
+            emit statusMessage(tr("Сначала выберите источник: Ctrl + щелчок левой кнопкой."));
             event->accept();
             return;
         }
