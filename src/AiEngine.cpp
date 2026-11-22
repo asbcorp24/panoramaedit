@@ -13,6 +13,12 @@
 #include <dml_provider_factory.h>
 #include <onnxruntime_cxx_api.h>
 #include <mutex>
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
 #endif
 
 namespace {
