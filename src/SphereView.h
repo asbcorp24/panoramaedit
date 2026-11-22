@@ -15,6 +15,8 @@
 #include <memory>
 #include <optional>
 
+class QEnterEvent;
+
 class SphereView final : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 public:
@@ -27,7 +29,7 @@ public:
     bool hasImage() const { return !baseImage_.isNull(); }
     void setMode(Mode mode);
     void setBrushColor(const QColor &color) { brushColor_ = color; }
-    void setBrushRadius(double degrees) { brushRadius_ = degrees; }
+    void setBrushRadius(double degrees);
     void setToolStrength(double value) { toolStrength_ = value; }
     void undo();
     void redo();
@@ -52,6 +54,8 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void enterEvent(QEnterEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private:
     void uploadTexture();
@@ -86,6 +90,8 @@ private:
     float yaw_ = 0.0f;
     float pitch_ = 0.0f;
     float fov_ = 75.0f;
+    QVector3D cursorDirection_{0, 0, -1};
+    bool cursorInside_ = false;
     QPoint lastMouse_;
     bool dragging_ = false;
     bool painting_ = false;

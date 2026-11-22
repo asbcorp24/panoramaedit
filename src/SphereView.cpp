@@ -1,6 +1,7 @@
 #include "SphereView.h"
 #include "SphericalLiquify.h"
 #include <QMouseEvent>
+#include <QEnterEvent>
 #include <QWheelEvent>
 #include <QOpenGLContext>
 #include <QMatrix4x4>
@@ -37,10 +38,15 @@ SphereView::~SphereView() {
 void SphereView::setMode(Mode mode) {
     mode_ = mode;
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
+    update(); // Refresh the angular brush outline on tool switches.
     if (mode == Mode::CloneStamp)
         emit statusMessage(tr("Штамп: Ctrl + щелчок левой кнопкой выбирает источник, затем рисуйте."));
     if (mode == Mode::AiSharpen || mode == Mode::AiInpaint)
         emit statusMessage(tr("Выделите участок левой кнопкой, затем нажмите «Применить ИИ»."));
+}
+void SphereView::setBrushRadius(double degrees) {
+    brushRadius_ = std::clamp(degrees, 0.1, 30.0);
+    update(); // The outline follows manual radius input/slider immediately.
 }
 void SphereView::setModified(bool modified) {
     if (modified_ == modified) return;
@@ -187,6 +193,10 @@ out vec4 fragColor;
 uniform sampler2D uPanorama;
 uniform sampler2D uMask;
 uniform bool uShowMask;
+uniform bool uShowCursor;
+uniform vec3 uCursorDirection;
+uniform float uCursorRadius;
+uniform float uCursorPixelAngle;
 const float PI = 3.14159265358979323846;
 void main() {
     vec3 d = normalize(vDirection);
@@ -197,6 +207,21 @@ void main() {
     if (uShowMask) {
         float selected = texture(uMask, vec2(u, v)).r;
         fragColor.rgb = mix(fragColor.rgb, vec3(0.12, 0.65, 1.0), selected * 0.45);
+    }
+    if (uShowCursor) {
+        // Same great-circle angular distance as the actual spherical brush.
+        // The contour therefore wraps across 0/360 degrees and both poles.
+        float angle = acos(clamp(dot(d, normalize(uCursorDirection)), -1.0, 1.0));
+        float offset = abs(angle - uCursorRadius);
+        float ringShadow = 1.0 - smoothstep(uCursorPixelAngle * 1.4,
+                                             uCursorPixelAngle * 2.7, offset);
+        float ring = 1.0 - smoothstep(uCursorPixelAngle * 0.45,
+                                       uCursorPixelAngle * 1.4, offset);
+        float inside = 1.0 - smoothstep(uCursorRadius - uCursorPixelAngle * 2.0,
+                                         uCursorRadius, angle);
+        fragColor.rgb = mix(fragColor.rgb, vec3(0.05, 0.32, 0.45), inside * 0.12);
+        fragColor.rgb = mix(fragColor.rgb, vec3(0.02, 0.04, 0.08), ringShadow * 0.86);
+        fragColor.rgb = mix(fragColor.rgb, vec3(0.15, 0.94, 1.0), ring * 0.94);
     }
 }
 )";
@@ -319,6 +344,12 @@ void SphereView::paintGL() {
     shader_->setUniformValue("uPanorama", 0);
     shader_->setUniformValue("uMask", 1);
     shader_->setUniformValue("uShowMask", hasAiSelection_ && !aiMask_.isNull());
+    shader_->setUniformValue("uShowCursor", cursorInside_ && mode_ != Mode::Navigate &&
+                                           !dragging_ && !composite_.isNull());
+    shader_->setUniformValue("uCursorDirection", cursorDirection_);
+    shader_->setUniformValue("uCursorRadius", float(brushRadius_) * rad);
+    shader_->setUniformValue("uCursorPixelAngle", std::max(0.0002f,
+        fov_ * rad / float(std::max(1, height()))));
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_);
     glActiveTexture(GL_TEXTURE1);
@@ -411,6 +442,8 @@ void SphereView::strokeBetween(const QVector3D &a, const QVector3D &b) {
 }
 void SphereView::mousePressEvent(QMouseEvent *event) {
     if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton) return;
+    cursorInside_ = true;
+    cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
     if (event->button() == Qt::LeftButton && mode_ == Mode::CloneStamp &&
         (event->modifiers() & Qt::ControlModifier) && hasImage()) {
@@ -437,6 +470,7 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     event->accept();
 }
 void SphereView::mouseMoveEvent(QMouseEvent *event) {
+    cursorInside_ = rect().contains(event->pos());
     if (painting_ && (event->buttons() & Qt::LeftButton)) {
         const auto next = directionFromScreen(event->position());
         if (lastStroke_) strokeBetween(*lastStroke_, next);
@@ -448,7 +482,10 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
         pitch_ = clampf(pitch_ + delta.y() * 0.22f, -89.9f, 89.9f);
         update();
     }
+    // Compute after navigation, so the ring remains centered beneath the pointer.
+    cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    update(); // Redraw the cursor even when no mouse button is pressed.
     event->accept();
 }
 void SphereView::mouseReleaseEvent(QMouseEvent *event) {
@@ -458,10 +495,23 @@ void SphereView::mouseReleaseEvent(QMouseEvent *event) {
         cloneSnapshot_ = {};
     }
     dragging_ = false;
+    update();
     event->accept();
 }
 void SphereView::wheelEvent(QWheelEvent *event) {
     fov_ = clampf(fov_ - event->angleDelta().y() / 120.0f * 4.0f, 20.0f, 110.0f);
+    cursorDirection_ = directionFromScreen(event->position());
     update();
     event->accept();
+}
+void SphereView::enterEvent(QEnterEvent *event) {
+    cursorInside_ = true;
+    cursorDirection_ = directionFromScreen(event->position());
+    update();
+    QOpenGLWidget::enterEvent(event);
+}
+void SphereView::leaveEvent(QEvent *event) {
+    cursorInside_ = false;
+    update();
+    QOpenGLWidget::leaveEvent(event);
 }
