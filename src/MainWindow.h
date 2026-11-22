@@ -20,5 +20,7 @@ private:
     QString filePath_;
     QAction *navigateAction_ = nullptr;
     QAction *brushAction_ = nullptr;
+    QAction *eraserAction_ = nullptr;
+    QAction *stampAction_ = nullptr;
     QLabel *statusLabel_ = nullptr;
 };

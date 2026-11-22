@@ -41,13 +41,21 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *group = new QActionGroup(this);
     navigateAction_ = toolbar->addAction(tr("Navigate"));
     brushAction_ = toolbar->addAction(tr("Brush"));
-    for (auto *action : {navigateAction_, brushAction_}) {
+    eraserAction_ = toolbar->addAction(tr("Eraser"));
+    stampAction_ = toolbar->addAction(tr("Clone Stamp"));
+    navigateAction_->setShortcut(QKeySequence("N"));
+    brushAction_->setShortcut(QKeySequence("B"));
+    eraserAction_->setShortcut(QKeySequence("E"));
+    stampAction_->setShortcut(QKeySequence("S"));
+    for (auto *action : {navigateAction_, brushAction_, eraserAction_, stampAction_}) {
         action->setCheckable(true);
         group->addAction(action);
     }
     navigateAction_->setChecked(true);
     connect(navigateAction_, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Navigate); });
     connect(brushAction_, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Brush); });
+    connect(eraserAction_, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Eraser); });
+    connect(stampAction_, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::CloneStamp); });
     toolbar->addSeparator();
     auto *color = toolbar->addAction(tr("Brush color..."));
     connect(color, &QAction::triggered, this, [this] {
@@ -66,7 +74,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     statusLabel_ = new QLabel(tr("Open a 2:1 panorama to begin"), this);
     statusBar()->addPermanentWidget(statusLabel_);
     connect(view_, &SphereView::imageChanged, this, [this] {
-        statusLabel_->setText(tr("360° × 180°  |  %1 × %2").arg(view_->hasImage() ? "loaded" : "empty").arg("equirectangular"));
+        statusLabel_->setText(tr("360° × 180°  |  Equirectangular 2:1"));
+    });
+    connect(view_, &SphereView::statusMessage, this, [this](const QString &message) {
+        statusBar()->showMessage(message, 6000);
     });
     connect(view_, &SphereView::modifiedChanged, this, [this](bool modified) {
         setWindowModified(modified);

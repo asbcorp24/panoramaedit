@@ -13,7 +13,20 @@ qt_add_executable(PanoramaEdit WIN32
     src/MainWindow.cpp
     src/SphereView.h
     src/SphereView.cpp
+    src/SphericalRaster.h
+    src/SphericalRaster.cpp
 )
 target_link_libraries(PanoramaEdit PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets)
 set_target_properties(PanoramaEdit PROPERTIES WIN32_EXECUTABLE TRUE)
 install(TARGETS PanoramaEdit RUNTIME DESTINATION .)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(PanoramaEditRasterTests
+        tests/SphericalRasterTests.cpp
+        src/SphericalRaster.cpp
+        src/SphericalRaster.h
+    )
+    target_link_libraries(PanoramaEditRasterTests PRIVATE Qt6::Gui)
+    add_test(NAME SphereRaster COMMAND PanoramaEditRasterTests)
+endif()

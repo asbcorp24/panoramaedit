@@ -3,9 +3,6 @@
 #include <QWheelEvent>
 #include <QOpenGLContext>
 #include <QMatrix4x4>
-#include <QVector2D>
-#include <QFileInfo>
-#include <QtMath>
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -37,7 +34,9 @@ SphereView::~SphereView() {
 }
 void SphereView::setMode(Mode mode) {
     mode_ = mode;
-    setCursor(mode == Mode::Brush ? Qt::CrossCursor : Qt::OpenHandCursor);
+    setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
+    if (mode == Mode::CloneStamp)
+        emit statusMessage(tr("Clone Stamp: Ctrl + left-click to choose source, then paint."));
 }
 void SphereView::setModified(bool modified) {
     if (modified_ == modified) return;
@@ -54,42 +53,59 @@ bool SphereView::openImage(const QString &path, QString *error) {
         if (error) *error = tr("Expected a 2:1 equirectangular panorama, got %1 × %2.").arg(loaded.width()).arg(loaded.height());
         return false;
     }
-    image_ = loaded.convertToFormat(QImage::Format_RGBA8888);
+    baseImage_ = loaded.convertToFormat(QImage::Format_RGBA8888);
+    editLayer_ = QImage(baseImage_.size(), QImage::Format_RGBA8888);
+    editLayer_.fill(Qt::transparent);
+    composite_ = baseImage_;
+    cloneSnapshot_ = {};
+    cloneSource_.reset();
     undoStack_.clear();
     redoStack_.clear();
+    revision_ = savedRevision_ = 0;
+    nextRevision_ = 1;
+    strokeHasChanged_ = false;
     yaw_ = pitch_ = 0;
-    textureDirty_ = true;
+    fullTextureDirty_ = true;
+    partialTextureDirty_ = {};
     setModified(false);
     update();
     emit imageChanged();
     return true;
 }
-bool SphereView::saveImage(const QString &path) const {
-    if (image_.isNull()) return false;
-    // Avoid mutating modified_ from a const method; caller handles filename state.
-    return image_.save(path);
+bool SphereView::saveImage(const QString &path) {
+    if (composite_.isNull() || !composite_.save(path)) return false;
+    savedRevision_ = revision_;
+    setModified(false);
+    return true;
 }
 void SphereView::pushUndo() {
-    if (image_.isNull()) return;
+    if (editLayer_.isNull()) return;
     if (undoStack_.size() >= historyLimit_) undoStack_.removeFirst();
-    undoStack_.push_back(image_);
+    undoStack_.push_back({editLayer_, revision_});
     redoStack_.clear();
 }
-void SphereView::undo() {
-    if (undoStack_.empty() || image_.isNull()) return;
-    redoStack_.push_back(image_);
-    image_ = undoStack_.takeLast();
-    textureDirty_ = true;
-    setModified(true);
+void SphereView::refreshComposite() {
+    SphericalRaster::recompose(composite_, baseImage_, editLayer_);
+    fullTextureDirty_ = true;
+    partialTextureDirty_ = {};
+    setModified(revision_ != savedRevision_);
     update();
 }
+void SphereView::undo() {
+    if (undoStack_.empty() || editLayer_.isNull()) return;
+    redoStack_.push_back({editLayer_, revision_});
+    const auto prior = undoStack_.takeLast();
+    editLayer_ = prior.layer;
+    revision_ = prior.revision;
+    refreshComposite();
+}
 void SphereView::redo() {
-    if (redoStack_.empty() || image_.isNull()) return;
-    undoStack_.push_back(image_);
-    image_ = redoStack_.takeLast();
-    textureDirty_ = true;
-    setModified(true);
-    update();
+    if (redoStack_.empty() || editLayer_.isNull()) return;
+    undoStack_.push_back({editLayer_, revision_});
+    const auto later = redoStack_.takeLast();
+    editLayer_ = later.layer;
+    revision_ = later.revision;
+    refreshComposite();
 }
 void SphereView::initializeGL() {
     initializeOpenGLFunctions();
@@ -123,7 +139,8 @@ void main() { fragColor = texture(uPanorama, vUV); }
         for (int x = 0; x <= slices; ++x) {
             const float u = float(x) / slices;
             const QVector3D d = sphereDir((u * 2.0f - 1.0f) * PI, latitude);
-            vertices.insert(vertices.end(), {d.x(), d.y(), d.z(), u, 1.0f - v});
+            // QImage rows are top-first; GL sees row 0 at texture coordinate v=0.
+            vertices.insert(vertices.end(), {d.x(), d.y(), d.z(), u, v});
         }
     }
     for (int y = 0; y < stacks; ++y) for (int x = 0; x < slices; ++x) {
@@ -149,24 +166,39 @@ void main() { fragColor = texture(uPanorama, vUV); }
     vertexBuffer_.release();
     indexBuffer_.release();
     glGenTextures(1, &texture_);
-    textureDirty_ = true;
+    fullTextureDirty_ = true;
 }
 void SphereView::resizeGL(int, int) {}
 void SphereView::uploadTexture() {
-    if (!textureDirty_ || !texture_ || image_.isNull()) return;
+    if ((!fullTextureDirty_ && partialTextureDirty_.isEmpty()) || !texture_ || composite_.isNull()) return;
     glBindTexture(GL_TEXTURE_2D, texture_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, image_.width(), image_.height(),
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, image_.constBits());
+    if (fullTextureDirty_) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, composite_.width(), composite_.height(),
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, composite_.constBits());
+    } else {
+        // Upload edited rows/rectangles only, instead of the entire 8K/16K image.
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, composite_.width());
+        for (const QRect &rect : partialTextureDirty_) {
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, rect.y());
+            glPixelStorei(GL_UNPACK_SKIP_PIXELS, rect.x());
+            glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x(), rect.y(), rect.width(), rect.height(),
+                            GL_RGBA, GL_UNSIGNED_BYTE, composite_.constBits());
+        }
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    textureDirty_ = false;
+    fullTextureDirty_ = false;
+    partialTextureDirty_ = {};
 }
 void SphereView::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    if (!shader_ || image_.isNull()) return;
+    if (!shader_ || composite_.isNull()) return;
     uploadTexture();
     glDisable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
@@ -186,8 +218,7 @@ void SphereView::paintGL() {
     shader_->release();
 }
 QVector3D SphereView::directionFromScreen(const QPointF &pos) const {
-    // Unproject through the exact same camera matrices used in paintGL().
-    // This keeps the brush aligned after zoom, yaw/pitch and window resizing.
+    // Use the same projection and camera matrices for painting and rendering.
     QMatrix4x4 projection;
     projection.perspective(fov_, float(width()) / std::max(1, height()), 0.01f, 10.0f);
     QMatrix4x4 view;
@@ -200,48 +231,23 @@ QVector3D SphereView::directionFromScreen(const QPointF &pos) const {
     const float ny = 1.0f - 2.0f * float(pos.y()) / std::max(1, height());
     const QVector4D nearPoint = inverse * QVector4D(nx, ny, -1.0f, 1.0f);
     const QVector4D farPoint = inverse * QVector4D(nx, ny, 1.0f, 1.0f);
-    const QVector3D nearWorld = nearPoint.toVector3DAffine();
-    const QVector3D farWorld = farPoint.toVector3DAffine();
-    return (farWorld - nearWorld).normalized();
+    return (farPoint.toVector3DAffine() - nearPoint.toVector3DAffine()).normalized();
 }
 void SphereView::paintAt(const QVector3D &direction) {
-    if (image_.isNull()) return;
-    const float longitude = std::atan2(direction.x(), -direction.z());
-    const float latitude = std::asin(clampf(direction.y(), -1, 1));
-    const int w = image_.width(), h = image_.height();
-    const float radius = float(brushRadius_) * rad;
-    const int cy = std::clamp(int((0.5f - latitude / PI) * h), 0, h - 1);
-    const int ry = int(std::ceil(radius * h / PI)) + 1;
-    const int y0 = std::max(0, cy - ry), y1 = std::min(h - 1, cy + ry);
-    const auto rgba = brushColor_.rgba();
-    const float ca = brushColor_.alphaF();
-    for (int y = y0; y <= y1; ++y) {
-        const float phi = PI * (0.5f - (y + 0.5f) / h);
-        const float sinPhi = std::sin(phi), cosPhi = std::cos(phi);
-        const float sinLat = std::sin(latitude), cosLat = std::cos(latitude);
-        const float denom = cosPhi * cosLat;
-        const float threshold = (std::cos(radius) - sinPhi * sinLat) / denom;
-        if (threshold > 1.0f) continue;
-        const float span = (denom < 1e-7f || threshold <= -1.0f) ? PI : std::acos(clampf(threshold, -1, 1));
-        const int cx = int((longitude / (2 * PI) + 0.5f) * w);
-        const int rx = int(std::ceil(span / (2 * PI) * w)) + 1;
-        const int first = rx >= w / 2 ? 0 : cx - rx;
-        const int last = rx >= w / 2 ? w - 1 : cx + rx;
-        uchar *row = image_.scanLine(y);
-        for (int xi = first; xi <= last; ++xi) {
-            const int x = (xi % w + w) % w;
-            const float theta = (float(x + 0.5f) / w - 0.5f) * 2 * PI;
-            const float dot = sinPhi * sinLat + cosPhi * cosLat * std::cos(theta - longitude);
-            if (dot < std::cos(radius)) continue;
-            uchar *px = row + x * 4;
-            px[0] = uchar(std::lround(px[0] * (1 - ca) + qRed(rgba) * ca));
-            px[1] = uchar(std::lround(px[1] * (1 - ca) + qGreen(rgba) * ca));
-            px[2] = uchar(std::lround(px[2] * (1 - ca) + qBlue(rgba) * ca));
-            px[3] = 255;
-        }
+    if (editLayer_.isNull()) return;
+    SphericalRaster::Tool tool = SphericalRaster::Tool::Brush;
+    if (mode_ == Mode::Eraser) tool = SphericalRaster::Tool::Eraser;
+    if (mode_ == Mode::CloneStamp) tool = SphericalRaster::Tool::CloneStamp;
+    const QImage *sampleImage = tool == SphericalRaster::Tool::CloneStamp ? &cloneSnapshot_ : nullptr;
+    const QRegion region = SphericalRaster::applyDab(editLayer_, composite_, baseImage_, sampleImage,
+        direction, brushRadius_, tool, brushColor_, cloneRotation_);
+    if (region.isEmpty()) return;
+    partialTextureDirty_ += region;
+    if (!strokeHasChanged_) {
+        strokeHasChanged_ = true;
+        revision_ = nextRevision_++;
     }
-    textureDirty_ = true;
-    setModified(true);
+    setModified(revision_ != savedRevision_);
     update();
 }
 void SphereView::strokeBetween(const QVector3D &a, const QVector3D &b) {
@@ -257,10 +263,24 @@ void SphereView::strokeBetween(const QVector3D &a, const QVector3D &b) {
 void SphereView::mousePressEvent(QMouseEvent *event) {
     if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton) return;
     lastMouse_ = event->pos();
-    if (mode_ == Mode::Brush && event->button() == Qt::LeftButton && hasImage()) {
+    if (event->button() == Qt::LeftButton && mode_ == Mode::CloneStamp &&
+        (event->modifiers() & Qt::ControlModifier) && hasImage()) {
+        cloneSource_ = directionFromScreen(event->position());
+        emit statusMessage(tr("Clone source set. Left-drag to copy onto the sphere."));
+    } else if (mode_ != Mode::Navigate && event->button() == Qt::LeftButton && hasImage()) {
+        if (mode_ == Mode::CloneStamp && !cloneSource_) {
+            emit statusMessage(tr("First choose clone source with Ctrl + left-click."));
+            event->accept();
+            return;
+        }
+        strokeHasChanged_ = false;
         pushUndo();
         painting_ = true;
         lastStroke_ = directionFromScreen(event->position());
+        if (mode_ == Mode::CloneStamp) {
+            cloneSnapshot_ = composite_;
+            cloneRotation_ = QQuaternion::rotationTo(*lastStroke_, *cloneSource_);
+        }
         paintAt(*lastStroke_);
     } else dragging_ = true;
     event->accept();
@@ -284,6 +304,7 @@ void SphereView::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
         painting_ = false;
         lastStroke_.reset();
+        cloneSnapshot_ = {};
     }
     dragging_ = false;
     event->accept();
