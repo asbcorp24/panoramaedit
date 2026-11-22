@@ -29,6 +29,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item build/Release/PanoramaEdit.exe package/
           windeployqt --release --compiler-runtime package/PanoramaEdit.exe
+          Copy-Item ai/ai_worker.py package/ai_worker.py
+          Copy-Item ai/setup_ai_windows.bat package/setup_ai_windows.bat
       - uses: actions/upload-artifact@v4
         with:
           name: PanoramaEdit-Windows-x64

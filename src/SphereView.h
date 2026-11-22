@@ -11,13 +11,15 @@
 #include <QQuaternion>
 #include <QRegion>
 #include "SphericalRaster.h"
+#include "SphericalAI.h"
 #include <memory>
 #include <optional>
 
 class SphereView final : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 public:
-    enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch };
+    enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch,
+                      AiSharpen, AiInpaint };
     explicit SphereView(QWidget *parent = nullptr);
     ~SphereView() override;
     bool openImage(const QString &path, QString *error = nullptr);
@@ -29,6 +31,12 @@ public:
     void setToolStrength(double value) { toolStrength_ = value; }
     void undo();
     void redo();
+    Mode mode() const { return mode_; }
+    quint64 documentId() const { return documentId_; }
+    std::optional<SphericalAI::Patch> prepareAiPatch() const;
+    bool applyAiResult(const SphericalAI::Patch &patch, const QImage &result);
+    void clearAiSelection();
+    void smoothSeam();
     bool isModified() const { return modified_; }
 
 signals:
@@ -47,6 +55,7 @@ protected:
 
 private:
     void uploadTexture();
+    void uploadMaskTexture();
     QVector3D directionFromScreen(const QPointF &pos) const;
     void paintAt(const QVector3D &direction);
     void strokeBetween(const QVector3D &a, const QVector3D &b);
@@ -57,11 +66,16 @@ private:
     QImage editLayer_;
     QImage composite_;
     QImage cloneSnapshot_;
+    QImage aiMask_;
+    QRegion aiMaskDirty_;
+    bool fullMaskDirty_ = true;
+    bool hasAiSelection_ = false;
     std::unique_ptr<QOpenGLShaderProgram> shader_;
     QOpenGLBuffer vertexBuffer_{QOpenGLBuffer::VertexBuffer};
     QOpenGLBuffer indexBuffer_{QOpenGLBuffer::IndexBuffer};
     QOpenGLVertexArrayObject vertexArray_;
     GLuint texture_ = 0;
+    GLuint maskTexture_ = 0;
     GLsizei indexCount_ = 0;
     bool fullTextureDirty_ = true;
     QRegion partialTextureDirty_;
@@ -87,6 +101,7 @@ private:
     quint64 revision_ = 0;
     quint64 savedRevision_ = 0;
     quint64 nextRevision_ = 1;
+    quint64 documentId_ = 0;
     bool strokeHasChanged_ = false;
     bool modified_ = false;
     static constexpr int historyLimit_ = 12;

@@ -6,3 +6,6 @@ out/
 *.exe
 *.dll
 *.pdb
+*.onnx
+ai_runtime/
+__pycache__/

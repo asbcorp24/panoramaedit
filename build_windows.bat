@@ -61,9 +61,14 @@ if not exist "!DEPLOY!" (
 )
 "!DEPLOY!" --release --compiler-runtime "!DIST!\PanoramaEdit.exe"
 if errorlevel 1 goto :fail
+copy /Y "ai\ai_worker.py" "!DIST!\ai_worker.py" >nul
+if errorlevel 1 goto :fail
+copy /Y "ai\setup_ai_windows.bat" "!DIST!\setup_ai_windows.bat" >nul
+if errorlevel 1 goto :fail
 
 echo.
 echo [SUCCESS] Ready: %CD%\!DIST!\PanoramaEdit.exe
+echo [OPTIONAL] To install both offline AI models, run !DIST!\setup_ai_windows.bat once.
 echo.
 pause
 exit /b 0

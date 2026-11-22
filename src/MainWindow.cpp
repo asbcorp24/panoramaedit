@@ -4,6 +4,7 @@
 #include <QActionGroup>
 #include <QCloseEvent>
 #include <QColorDialog>
+#include <QCoreApplication>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -13,13 +14,17 @@
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProcess>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
 #include <QTimer>
+#include <QTemporaryDir>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <memory>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     view_ = new SphereView(this);
@@ -99,14 +104,30 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             "I", SphereView::Mode::Bloat, 3, 0);
     addTool(tr("Сжатие"), tr("Сжать область к центру кисти (C)"),
             "C", SphereView::Mode::Pinch, 3, 1);
+    addTool(tr("ИИ-резкость"), tr("Выделите размытую область для улучшения (U)"),
+            "U", SphereView::Mode::AiSharpen, 4, 0);
+    addTool(tr("ИИ-дорисовка"), tr("Выделите участок, который нужно заполнить фоном (J)"),
+            "J", SphereView::Mode::AiInpaint, 4, 1);
 
     auto *color = new QPushButton(tr("Цвет кисти..."), panel);
     color->setMinimumHeight(32);
-    buttons->addWidget(color, 4, 0, 1, 2);
+    buttons->addWidget(color, 5, 0, 1, 2);
     connect(color, &QPushButton::clicked, this, [this] {
         const QColor chosen = QColorDialog::getColor(Qt::red, this, tr("Цвет кисти"));
         if (chosen.isValid()) view_->setBrushColor(chosen);
     });
+    applyAiButton_ = new QPushButton(tr("Применить ИИ к выделению"), panel);
+    applyAiButton_->setMinimumHeight(34);
+    applyAiButton_->setToolTip(tr("Обработать выделенную область локальной нейросетью"));
+    buttons->addWidget(applyAiButton_, 6, 0, 1, 2);
+    connect(applyAiButton_, &QPushButton::clicked, this, &MainWindow::startAiRestoration);
+    auto *clearAi = new QPushButton(tr("Очистить ИИ-выделение"), panel);
+    buttons->addWidget(clearAi, 7, 0, 1, 2);
+    connect(clearAi, &QPushButton::clicked, view_, &SphereView::clearAiSelection);
+    auto *seam = new QPushButton(tr("Сгладить шов 0°/360°"), panel);
+    seam->setToolTip(tr("Мягко свести левый и правый края. Ширина — радиус кисти."));
+    buttons->addWidget(seam, 8, 0, 1, 2);
+    connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
     panelLayout->addWidget(new QLabel(tr("Радиус кисти (градусы):"), panel));
     auto *radiusRow = new QHBoxLayout();
@@ -199,6 +220,108 @@ void MainWindow::openFile() {
     }
     filePath_ = path;
     setWindowTitle(QString("PanoramaEdit — %1[*]").arg(QFileInfo(filePath_).fileName()));
+}
+
+void MainWindow::startAiRestoration() {
+    if (aiProcess_) return;
+    const SphereView::Mode mode = view_->mode();
+    if (mode != SphereView::Mode::AiSharpen && mode != SphereView::Mode::AiInpaint) {
+        QMessageBox::information(this, tr("ИИ-восстановление"),
+            tr("Сначала выберите «ИИ-резкость» или «ИИ-дорисовка», "
+               "затем закрасьте нужную область на сфере."));
+        return;
+    }
+    auto selected = view_->prepareAiPatch();
+    if (!selected) {
+        QMessageBox::information(this, tr("ИИ-восстановление"),
+            tr("Нет выделения или оно слишком большое. Выделите кистью "
+               "один небольшой участок (до 1024 пикселей с окружением)."));
+        return;
+    }
+
+    const QString applicationPath = QCoreApplication::applicationDirPath();
+    const QString model = applicationPath + (mode == SphereView::Mode::AiSharpen
+        ? "/models/deblur.onnx" : "/models/inpaint.onnx");
+    const QString python = applicationPath + "/ai_runtime/Scripts/python.exe";
+    const QString script = applicationPath + "/ai_worker.py";
+    if (!QFileInfo::exists(model) || !QFileInfo::exists(python) || !QFileInfo::exists(script)) {
+        QMessageBox::warning(this, tr("ИИ ещё не установлен"),
+            tr("Для локального ИИ один раз запустите «setup_ai_windows.bat» "
+               "рядом с PanoramaEdit.exe. Он установит среду и две модели. "
+               "После этого интернет для обработки панорам не нужен."));
+        return;
+    }
+
+    auto temporary = std::make_shared<QTemporaryDir>();
+    if (!temporary->isValid()) {
+        QMessageBox::warning(this, tr("Ошибка ИИ"), tr("Не удалось создать временную папку."));
+        return;
+    }
+    const QString input = temporary->filePath("input.png");
+    const QString mask = temporary->filePath("mask.png");
+    const QString output = temporary->filePath("output.png");
+    if (!selected->image.save(input) || !selected->mask.save(mask)) {
+        QMessageBox::warning(this, tr("Ошибка ИИ"), tr("Не удалось сохранить выделенную область."));
+        return;
+    }
+
+    auto *process = new QProcess(this);
+    aiProcess_ = process;
+    applyAiButton_->setEnabled(false);
+    const quint64 documentId = view_->documentId();
+    auto *progress = new QProgressDialog(tr("Нейросеть обрабатывает выделение офлайн..."),
+        tr("Отмена"), 0, 0, this);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setWindowModality(Qt::ApplicationModal);
+    connect(progress, &QProgressDialog::canceled, process, &QProcess::kill);
+
+    connect(process, &QProcess::finished, this,
+        [this, process, progress, temporary, selected = std::move(*selected),
+         output, documentId](int code, QProcess::ExitStatus status) {
+        if (aiProcess_ != process) return;
+        const bool canceled = progress->wasCanceled();
+        progress->close();
+        progress->deleteLater();
+        aiProcess_ = nullptr;
+        applyAiButton_->setEnabled(true);
+        if (canceled) {
+            statusBar()->showMessage(tr("ИИ-обработка отменена"), 5000);
+        } else if (status != QProcess::NormalExit || code != 0) {
+            QMessageBox::warning(this, tr("Ошибка ИИ-модели"),
+                QString::fromUtf8(process->readAll()).left(1500));
+        } else if (documentId != view_->documentId()) {
+            statusBar()->showMessage(tr("Панорама сменилась: старый результат ИИ отброшен"), 6000);
+        } else {
+            QImage result(output);
+            if (result.isNull() || !view_->applyAiResult(selected, result)) {
+                QMessageBox::information(this, tr("ИИ-восстановление"),
+                    tr("Модель не вернула изменений в выбранной области."));
+            } else {
+                statusBar()->showMessage(tr("ИИ-восстановление применено. Ctrl+Z — отменить."), 7000);
+            }
+        }
+        process->deleteLater();
+    });
+    connect(process, &QProcess::errorOccurred, this,
+        [this, process, progress](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart || aiProcess_ != process) return;
+        progress->close();
+        progress->deleteLater();
+        aiProcess_ = nullptr;
+        applyAiButton_->setEnabled(true);
+        QMessageBox::warning(this, tr("Не удалось запустить ИИ"), process->errorString());
+        process->deleteLater();
+    });
+    process->setProgram(python);
+    process->setArguments({script, "--mode", mode == SphereView::Mode::AiSharpen
+        ? "sharpen" : "inpaint", "--model", model, "--image", input,
+        "--mask", mask, "--output", output});
+    process->setWorkingDirectory(applicationPath);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    process->start();
+    progress->show();
 }
 
 bool MainWindow::saveFile() {

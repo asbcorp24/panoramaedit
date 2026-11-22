@@ -15,6 +15,8 @@ qt_add_executable(PanoramaEdit WIN32
     src/SphereView.cpp
     src/SphericalLiquify.h
     src/SphericalLiquify.cpp
+    src/SphericalAI.h
+    src/SphericalAI.cpp
     src/SphericalRaster.h
     src/SphericalRaster.cpp
 )
@@ -30,9 +32,21 @@ if(BUILD_TESTING)
         src/SphericalRaster.h
         src/SphericalLiquify.cpp
         src/SphericalLiquify.h
+        src/SphericalAI.h
+        src/SphericalAI.cpp
     )
     target_link_libraries(PanoramaEditRasterTests PRIVATE Qt6::Gui)
     add_test(NAME SphereRaster COMMAND PanoramaEditRasterTests)
+
+    add_executable(PanoramaEditAITests
+        tests/SphericalAITests.cpp
+        src/SphericalAI.h
+        src/SphericalAI.cpp
+        src/SphericalRaster.h
+        src/SphericalRaster.cpp
+    )
+    target_link_libraries(PanoramaEditAITests PRIVATE Qt6::Gui)
+    add_test(NAME SphericalAI COMMAND PanoramaEditAITests)
 
     add_executable(PanoramaEditPaletteTests
         tests/ToolsPaletteTests.cpp
@@ -42,6 +56,8 @@ if(BUILD_TESTING)
         src/SphereView.cpp
         src/SphericalLiquify.h
         src/SphericalLiquify.cpp
+        src/SphericalAI.h
+        src/SphericalAI.cpp
         src/SphericalRaster.h
         src/SphericalRaster.cpp
     )

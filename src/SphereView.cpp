@@ -27,6 +27,7 @@ SphereView::~SphereView() {
     if (context()) {
         makeCurrent();
         if (texture_) glDeleteTextures(1, &texture_);
+        if (maskTexture_) glDeleteTextures(1, &maskTexture_);
         vertexArray_.destroy();
         vertexBuffer_.destroy();
         indexBuffer_.destroy();
@@ -38,6 +39,8 @@ void SphereView::setMode(Mode mode) {
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
     if (mode == Mode::CloneStamp)
         emit statusMessage(tr("Штамп: Ctrl + щелчок левой кнопкой выбирает источник, затем рисуйте."));
+    if (mode == Mode::AiSharpen || mode == Mode::AiInpaint)
+        emit statusMessage(tr("Выделите участок левой кнопкой, затем нажмите «Применить ИИ»."));
 }
 void SphereView::setModified(bool modified) {
     if (modified_ == modified) return;
@@ -66,11 +69,16 @@ bool SphereView::openImage(const QString &path, QString *error) {
     editLayer_.fill(Qt::transparent);
     composite_ = baseImage_;
     cloneSnapshot_ = {};
+    aiMask_ = {};
+    aiMaskDirty_ = {};
+    hasAiSelection_ = false;
+    fullMaskDirty_ = true;
     cloneSource_.reset();
     undoStack_.clear();
     redoStack_.clear();
     revision_ = savedRevision_ = 0;
     nextRevision_ = 1;
+    ++documentId_;
     strokeHasChanged_ = false;
     yaw_ = pitch_ = 0;
     fullTextureDirty_ = true;
@@ -115,6 +123,50 @@ void SphereView::redo() {
     revision_ = later.revision;
     refreshComposite();
 }
+std::optional<SphericalAI::Patch> SphereView::prepareAiPatch() const {
+    if (!hasAiSelection_) return std::nullopt;
+    return SphericalAI::preparePatch(composite_, aiMask_);
+}
+void SphereView::clearAiSelection() {
+    aiMask_ = {};
+    aiMaskDirty_ = {};
+    fullMaskDirty_ = true;
+    hasAiSelection_ = false;
+    update();
+}
+bool SphereView::applyAiResult(const SphericalAI::Patch &patch, const QImage &result) {
+    if (!hasImage() || patch.image.isNull() || result.size() != patch.image.size())
+        return false;
+    pushUndo();
+    const QRegion region = SphericalAI::applyPatch(editLayer_, composite_, patch,
+        result.convertToFormat(QImage::Format_RGBA8888), toolStrength_);
+    if (region.isEmpty()) {
+        if (!undoStack_.isEmpty()) undoStack_.removeLast();
+        return false;
+    }
+    partialTextureDirty_ += region;
+    revision_ = nextRevision_++;
+    setModified(revision_ != savedRevision_);
+    clearAiSelection();
+    update();
+    return true;
+}
+void SphereView::smoothSeam() {
+    if (!hasImage()) return;
+    pushUndo();
+    const int halfWidth = std::max(1, int(std::ceil(brushRadius_ * baseImage_.width() / 360.0)));
+    const QRegion region = SphericalAI::smoothSeam(editLayer_, composite_, halfWidth);
+    if (region.isEmpty()) {
+        if (!undoStack_.isEmpty()) undoStack_.removeLast();
+        emit statusMessage(tr("Шов уже совпадает — исправления не требуются."));
+        return;
+    }
+    partialTextureDirty_ += region;
+    revision_ = nextRevision_++;
+    setModified(revision_ != savedRevision_);
+    update();
+    emit statusMessage(tr("Шов 0°/360° сглажен. Ctrl+Z — отменить."));
+}
 void SphereView::initializeGL() {
     initializeOpenGLFunctions();
     glClearColor(0.075f, 0.085f, 0.11f, 1.0f);
@@ -133,6 +185,8 @@ in vec2 vUV;
 in vec3 vDirection;
 out vec4 fragColor;
 uniform sampler2D uPanorama;
+uniform sampler2D uMask;
+uniform bool uShowMask;
 const float PI = 3.14159265358979323846;
 void main() {
     vec3 d = normalize(vDirection);
@@ -140,6 +194,10 @@ void main() {
     // OpenGL treats the first row of QImage as the bottom texture row (v=0).
     float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI;
     fragColor = texture(uPanorama, vec2(u, v));
+    if (uShowMask) {
+        float selected = texture(uMask, vec2(u, v)).r;
+        fragColor.rgb = mix(fragColor.rgb, vec3(0.12, 0.65, 1.0), selected * 0.45);
+    }
 }
 )";
     if (!shader_->addShaderFromSourceCode(QOpenGLShader::Vertex, vs) ||
@@ -183,7 +241,9 @@ void main() {
     vertexBuffer_.release();
     indexBuffer_.release();
     glGenTextures(1, &texture_);
+    glGenTextures(1, &maskTexture_);
     fullTextureDirty_ = true;
+    fullMaskDirty_ = true;
 }
 void SphereView::resizeGL(int, int) {}
 void SphereView::uploadTexture() {
@@ -213,10 +273,40 @@ void SphereView::uploadTexture() {
     fullTextureDirty_ = false;
     partialTextureDirty_ = {};
 }
+void SphereView::uploadMaskTexture() {
+    if (aiMask_.isNull() || !maskTexture_ ||
+        (!fullMaskDirty_ && aiMaskDirty_.isEmpty())) return;
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, maskTexture_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, aiMask_.bytesPerLine());
+    if (fullMaskDirty_) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aiMask_.width(), aiMask_.height(),
+                     0, GL_RED, GL_UNSIGNED_BYTE, aiMask_.constBits());
+    } else {
+        for (const QRect &rect : aiMaskDirty_) {
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, rect.y());
+            glPixelStorei(GL_UNPACK_SKIP_PIXELS, rect.x());
+            glTexSubImage2D(GL_TEXTURE_2D, 0, rect.x(), rect.y(), rect.width(), rect.height(),
+                            GL_RED, GL_UNSIGNED_BYTE, aiMask_.constBits());
+        }
+    }
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    fullMaskDirty_ = false;
+    aiMaskDirty_ = {};
+    glActiveTexture(GL_TEXTURE0);
+}
 void SphereView::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (!shader_ || composite_.isNull()) return;
     uploadTexture();
+    uploadMaskTexture();
     glDisable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     QMatrix4x4 projection;
@@ -227,8 +317,13 @@ void SphereView::paintGL() {
     shader_->bind();
     shader_->setUniformValue("uMVP", projection * view);
     shader_->setUniformValue("uPanorama", 0);
+    shader_->setUniformValue("uMask", 1);
+    shader_->setUniformValue("uShowMask", hasAiSelection_ && !aiMask_.isNull());
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture_);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, maskTexture_);
+    glActiveTexture(GL_TEXTURE0);
     vertexArray_.bind();
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
     vertexArray_.release();
@@ -252,6 +347,20 @@ QVector3D SphereView::directionFromScreen(const QPointF &pos) const {
 }
 void SphereView::paintAt(const QVector3D &direction) {
     if (editLayer_.isNull()) return;
+    if (mode_ == Mode::AiSharpen || mode_ == Mode::AiInpaint) {
+        if (aiMask_.isNull()) {
+            aiMask_ = QImage(baseImage_.size(), QImage::Format_Grayscale8);
+            aiMask_.fill(0);
+            fullMaskDirty_ = true;
+        }
+        const QRegion region = SphericalAI::paintMask(aiMask_, direction, brushRadius_);
+        if (!region.isEmpty()) {
+            aiMaskDirty_ += region;
+            hasAiSelection_ = true;
+            update();
+        }
+        return;
+    }
     if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
         mode_ == Mode::Bloat || mode_ == Mode::Pinch) {
         SphericalLiquify::Tool tool = SphericalLiquify::Tool::Smudge;
@@ -314,7 +423,8 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
             return;
         }
         strokeHasChanged_ = false;
-        pushUndo();
+        if (mode_ != Mode::AiSharpen && mode_ != Mode::AiInpaint)
+            pushUndo();
         painting_ = true;
         lastStroke_ = directionFromScreen(event->position());
         if (mode_ == Mode::CloneStamp) {

@@ -5,6 +5,8 @@
 class SphereView;
 class QAction;
 class QLabel;
+class QPushButton;
+class QProcess;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -16,6 +18,7 @@ private:
     bool confirmDiscard();
     void openFile();
     bool saveFile();
+    void startAiRestoration();
     SphereView *view_ = nullptr;
     QString filePath_;
     QAction *navigateAction_ = nullptr;
@@ -23,4 +26,6 @@ private:
     QAction *eraserAction_ = nullptr;
     QAction *stampAction_ = nullptr;
     QLabel *statusLabel_ = nullptr;
+    QPushButton *applyAiButton_ = nullptr;
+    QProcess *aiProcess_ = nullptr;
 };

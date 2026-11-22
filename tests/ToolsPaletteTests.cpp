@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QPushButton>
 #include <QSlider>
 #include <QToolButton>
 
@@ -47,15 +48,25 @@ int main(int argc, char **argv) {
     require(radiusSlider->value() == 300, "30 degree radius is unavailable");
 
     bool foundBrush = false, foundFinger = false, foundWarp = false, foundBloat = false;
+    bool foundSharpen = false, foundInpaint = false;
     for (QToolButton *button : palette->findChildren<QToolButton *>()) {
         const QString name = button->text();
         foundBrush |= name == QStringLiteral("Кисть");
         foundFinger |= name == QStringLiteral("Палец");
         foundWarp |= name == QStringLiteral("Деформация");
         foundBloat |= name == QStringLiteral("Вздутие");
+        foundSharpen |= name == QStringLiteral("ИИ-резкость");
+        foundInpaint |= name == QStringLiteral("ИИ-дорисовка");
     }
     require(foundBrush && foundFinger && foundWarp && foundBloat,
             "Russian tool labels missing");
+    require(foundSharpen && foundInpaint, "offline AI actions missing from palette");
+    bool foundApply = false, foundSeamRepair = false;
+    for (QPushButton *button : palette->findChildren<QPushButton *>()) {
+        foundApply |= button->text() == QStringLiteral("Применить ИИ к выделению");
+        foundSeamRepair |= button->text() == QStringLiteral("Сгладить шов 0°/360°");
+    }
+    require(foundApply && foundSeamRepair, "AI apply/seam repair controls missing");
 
     std::cout << "Tools palette and manual radius tests passed.\n";
     return EXIT_SUCCESS;
