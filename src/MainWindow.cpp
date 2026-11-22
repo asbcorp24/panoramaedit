@@ -57,6 +57,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(eraserAction_, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Eraser); });
     connect(stampAction_, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::CloneStamp); });
     toolbar->addSeparator();
+    auto *smudge = toolbar->addAction(tr("Finger"));
+    auto *push = toolbar->addAction(tr("Push"));
+    auto *bloat = toolbar->addAction(tr("Bloat"));
+    auto *pinch = toolbar->addAction(tr("Pinch"));
+    for (auto *action : {smudge, push, bloat, pinch}) {
+        action->setCheckable(true);
+        group->addAction(action);
+    }
+    connect(smudge, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Smudge); });
+    connect(push, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Push); });
+    connect(bloat, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Bloat); });
+    connect(pinch, &QAction::triggered, this, [this] { view_->setMode(SphereView::Mode::Pinch); });
+    toolbar->addSeparator();
     auto *color = toolbar->addAction(tr("Brush color..."));
     connect(color, &QAction::triggered, this, [this] {
         const QColor chosen = QColorDialog::getColor(Qt::red, this, tr("Brush color"));
@@ -70,6 +83,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     radius->setToolTip(tr("Angular radius: 0.1° to 20°"));
     connect(radius, &QSlider::valueChanged, this, [this](int v) { view_->setBrushRadius(v / 10.0); });
     toolbar->addWidget(radius);
+    toolbar->addWidget(new QLabel(tr("  Strength: "), toolbar));
+    auto *strength = new QSlider(Qt::Horizontal, toolbar);
+    strength->setRange(1, 100);
+    strength->setValue(50);
+    strength->setFixedWidth(110);
+    connect(strength, &QSlider::valueChanged, this, [this](int v) {
+        view_->setToolStrength(v / 100.0);
+    });
+    toolbar->addWidget(strength);
 
     statusLabel_ = new QLabel(tr("Open a 2:1 panorama to begin"), this);
     statusBar()->addPermanentWidget(statusLabel_);
