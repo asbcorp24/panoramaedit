@@ -27,12 +27,33 @@ int main(int argc, char *argv[]) {
             qCritical() << "Native NAFNet model validation failed:" << error;
             return 3;
         }
-        const auto result = AiEngine::run(AiEngine::Mode::Sharpen, model, image, mask);
-        if (!result.error.isEmpty() || result.image.size() != image.size()) {
+        auto singleProgress = std::make_shared<AiEngine::Progress>();
+        const auto result = AiEngine::run(AiEngine::Mode::Sharpen, model, image, mask,
+                                          {}, singleProgress);
+        if (!result.error.isEmpty() || result.image.size() != image.size() ||
+            singleProgress->total.load() != 1 || singleProgress->completed.load() != 1) {
             qCritical() << "Native inference failed:" << result.error << result.image.size();
             return 4;
         }
-        qInfo() << "Native NAFNet inference OK, 65x33, GPU:" << result.usedGpu;
+
+        // Width >512 activates true multi-tile progress + feathered blending.
+        QImage wide(545, 65, QImage::Format_RGBA8888);
+        wide.fill(QColor(110, 140, 170));
+        QImage wideMask(wide.size(), QImage::Format_Grayscale8);
+        wideMask.fill(255);
+        auto tiledProgress = std::make_shared<AiEngine::Progress>();
+        const auto tiled = AiEngine::run(AiEngine::Mode::Sharpen, model, wide, wideMask,
+                                         {}, tiledProgress);
+        if (!tiled.error.isEmpty() || tiled.image.size() != wide.size() ||
+            tiledProgress->total.load() < 2 ||
+            tiledProgress->completed.load() != tiledProgress->total.load() ||
+            tiledProgress->phase.load() != AiEngine::Phase::Finished) {
+            qCritical() << "Tiled inference/progress failed:" << tiled.error
+                        << tiledProgress->completed.load() << tiledProgress->total.load();
+            return 5;
+        }
+        qInfo() << "Native NAFNet inference OK, single and" << tiledProgress->total.load()
+                << "tiles, GPU:" << result.usedGpu;
     }
     return 0;
 }

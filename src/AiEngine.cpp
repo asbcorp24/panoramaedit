@@ -2,6 +2,7 @@
 
 #include <QFileInfo>
 #include <QDateTime>
+#include <QRect>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -248,6 +249,124 @@ QImage infer(Ort::Session &session, AiEngine::Mode mode, const QImage &source,
     if (isCanceled(cancel)) return {};
     return decodeOutput(outputs.at(0), source.size(), mode == AiEngine::Mode::Sharpen);
 }
+
+struct Tile {
+    QRect core;
+    QRect output;
+    QRect input;
+};
+
+bool hasSelection(const QImage &mask, const QRect &area) {
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        const uchar *line = mask.constScanLine(y);
+        for (int x = area.left(); x <= area.right(); ++x)
+            if (line[x] != 0) return true;
+    }
+    return false;
+}
+
+std::vector<Tile> planTiles(const QImage &mask) {
+    const QRect bounds(0, 0, mask.width(), mask.height());
+    if (mask.width() <= 512 && mask.height() <= 512)
+        return {{bounds, bounds, bounds}}; // original full-context behaviour
+
+    // 320 + 2*(32 feather + 64 context) = 512, matching LaMa's model size.
+    constexpr int coreSize = 320;
+    constexpr int outputFeather = 32;
+    constexpr int context = 64;
+    std::vector<Tile> result;
+    for (int y = 0; y < mask.height(); y += coreSize) {
+        for (int x = 0; x < mask.width(); x += coreSize) {
+            const QRect core(x, y, std::min(coreSize, mask.width() - x),
+                             std::min(coreSize, mask.height() - y));
+            if (!hasSelection(mask, core)) continue;
+            const QRect output = core.adjusted(-outputFeather, -outputFeather,
+                                                outputFeather, outputFeather).intersected(bounds);
+            const QRect input = output.adjusted(-context, -context,
+                                                context, context).intersected(bounds);
+            result.push_back({core, output, input});
+        }
+    }
+    return result;
+}
+
+float edgeWeight(int position, int coreMin, int coreMax, int outputMin, int outputMax) {
+    float t = 1.0f;
+    if (position < coreMin)
+        t = float(position - outputMin + 1) / float(coreMin - outputMin + 1);
+    else if (position > coreMax)
+        t = float(outputMax - position + 1) / float(outputMax - coreMax + 1);
+    t = std::clamp(t, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t); // smoothstep to avoid grid seams
+}
+
+QImage processTiles(Ort::Session &session, AiEngine::Mode mode, const QImage &source,
+                    const QImage &mask, const std::shared_ptr<std::atomic_bool> &cancel,
+                    const std::shared_ptr<AiEngine::Progress> &progress) {
+    const QImage selection = mask.convertToFormat(QImage::Format_Grayscale8);
+    const auto tiles = planTiles(selection);
+    if (progress) {
+        progress->completed.store(0, std::memory_order_relaxed);
+        progress->total.store(int(tiles.size()), std::memory_order_release);
+        progress->phase.store(AiEngine::Phase::Processing, std::memory_order_release);
+    }
+    if (isCanceled(cancel)) return {};
+    if (tiles.empty()) return source.convertToFormat(QImage::Format_RGBA8888);
+    if (tiles.size() == 1 && tiles.front().input == QRect(0, 0, source.width(), source.height())) {
+        QImage output = infer(session, mode, source, selection, cancel);
+        if (progress && !output.isNull()) {
+            progress->completed.store(1, std::memory_order_release);
+            progress->phase.store(AiEngine::Phase::Finished, std::memory_order_release);
+        }
+        return output;
+    }
+
+    const int width = source.width(), height = source.height();
+    const size_t pixelCount = size_t(width) * height;
+    std::vector<float> colorSum(pixelCount * 3, 0.0f);
+    std::vector<float> weights(pixelCount, 0.0f);
+    for (size_t index = 0; index < tiles.size(); ++index) {
+        if (isCanceled(cancel)) return {};
+        const Tile &tile = tiles[index];
+        const QImage restored = infer(session, mode, source.copy(tile.input),
+                                      selection.copy(tile.input), cancel);
+        if (restored.isNull()) return {};
+        for (int y = tile.output.top(); y <= tile.output.bottom(); ++y) {
+            const float wy = edgeWeight(y, tile.core.top(), tile.core.bottom(),
+                                         tile.output.top(), tile.output.bottom());
+            const uchar *line = restored.constScanLine(y - tile.input.top());
+            for (int x = tile.output.left(); x <= tile.output.right(); ++x) {
+                const float wx = edgeWeight(x, tile.core.left(), tile.core.right(),
+                                             tile.output.left(), tile.output.right());
+                const float weight = wx * wy;
+                const size_t pixel = size_t(y) * width + x;
+                const uchar *rgb = line + 4 * (x - tile.input.left());
+                for (int c = 0; c < 3; ++c)
+                    colorSum[3 * pixel + c] += rgb[c] * weight;
+                weights[pixel] += weight;
+            }
+        }
+        if (progress)
+            progress->completed.store(int(index + 1), std::memory_order_release);
+    }
+    if (progress) progress->phase.store(AiEngine::Phase::Blending, std::memory_order_release);
+    if (isCanceled(cancel)) return {};
+    QImage output = source.convertToFormat(QImage::Format_RGBA8888);
+    if (output.isNull()) throw std::runtime_error("Not enough RAM for tiled ONNX output");
+    for (int y = 0; y < height; ++y) {
+        uchar *line = output.scanLine(y);
+        for (int x = 0; x < width; ++x) {
+            const size_t pixel = size_t(y) * width + x;
+            if (weights[pixel] <= 0.0f) continue;
+            for (int c = 0; c < 3; ++c)
+                line[4 * x + c] = uchar(std::lround(std::clamp(
+                    colorSum[3 * pixel + c] / weights[pixel], 0.0f, 255.0f)));
+            line[4 * x + 3] = 255;
+        }
+    }
+    if (progress) progress->phase.store(AiEngine::Phase::Finished, std::memory_order_release);
+    return output;
+}
 #endif
 
 } // namespace
@@ -277,7 +396,8 @@ QString validate(Mode mode, const QString &modelPath) {
 }
 
 Result run(Mode mode, const QString &modelPath, const QImage &image,
-           const QImage &mask, const std::shared_ptr<std::atomic_bool> &canceled) {
+           const QImage &mask, const std::shared_ptr<std::atomic_bool> &canceled,
+           const std::shared_ptr<Progress> &progress) {
     if (image.isNull() || mask.isNull() || image.size() != mask.size())
         return {{}, QStringLiteral("Некорректное изображение или маска выделения")};
     QFileInfo model(modelPath);
@@ -286,18 +406,28 @@ Result run(Mode mode, const QString &modelPath, const QImage &image,
                         .arg(modelPath)};
 #ifdef _WIN32
     try {
+        if (progress) {
+            progress->phase.store(Phase::Loading, std::memory_order_release);
+            progress->completed.store(0, std::memory_order_relaxed);
+            progress->total.store(0, std::memory_order_release);
+        }
         Runtime &context = runtime();
         std::lock_guard lock(context.mutex); // only one GPU inference at a time
         CachedSession &cached = mode == Mode::Sharpen ? context.sharpen : context.inpaint;
         ensureSession(context, cached, modelPath, model);
+        if (progress) progress->usingGpu.store(cached.gpu, std::memory_order_release);
         try {
-            QImage output = infer(*cached.session, mode, image, mask, canceled);
+            QImage output = processTiles(*cached.session, mode, image, mask, canceled, progress);
             return {std::move(output), {}, cached.gpu};
         } catch (const Ort::Exception &) {
             if (!cached.gpu) throw;
             // DirectML can load a graph yet fail running a particular tensor.
             openSession(context, cached, modelPath, model, false);
-            QImage output = infer(*cached.session, mode, image, mask, canceled);
+            if (progress) {
+                progress->phase.store(Phase::Loading, std::memory_order_release);
+                progress->usingGpu.store(false, std::memory_order_release);
+            }
+            QImage output = processTiles(*cached.session, mode, image, mask, canceled, progress);
             return {std::move(output), {}, false};
         }
     } catch (const std::exception &error) {
@@ -310,6 +440,7 @@ Result run(Mode mode, const QString &modelPath, const QImage &image,
 #else
     Q_UNUSED(mode)
     Q_UNUSED(canceled)
+    Q_UNUSED(progress)
     return {{}, QStringLiteral("Встроенный ИИ поддерживается в Windows-сборке")};
 #endif
 }

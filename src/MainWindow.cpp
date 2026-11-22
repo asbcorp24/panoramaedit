@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -20,6 +21,7 @@
 #include <QPalette>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
@@ -29,6 +31,7 @@
 #include <QtConcurrent>
 #include <atomic>
 #include <memory>
+#include <algorithm>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     view_ = new SphereView(this);
@@ -289,28 +292,121 @@ void MainWindow::startAiRestoration() {
     aiWatcher_ = watcher;
     applyAiButton_->setEnabled(false);
     const quint64 documentId = view_->documentId();
-    auto *progress = new QProgressDialog(tr("Нейросеть обрабатывает выделение офлайн..."),
+    const auto aiMode = mode == SphereView::Mode::AiSharpen
+        ? AiEngine::Mode::Sharpen : AiEngine::Mode::Inpaint;
+    const QString modeName = aiMode == AiEngine::Mode::Sharpen
+        ? tr("ИИ-резкость") : tr("ИИ-дорисовка");
+    const QString statsKey = aiMode == AiEngine::Mode::Sharpen
+        ? QStringLiteral("ai/sharpen/") : QStringLiteral("ai/inpaint/");
+    QSettings settings;
+    const double previousGpuRate = settings.value(statsKey + "gpu_ms_per_pixel").toDouble();
+    const double previousCpuRate = settings.value(statsKey + "cpu_ms_per_pixel").toDouble();
+    auto elapsed = std::make_shared<QElapsedTimer>();
+    elapsed->start();
+    auto processingStart = std::make_shared<qint64>(-1);
+    auto progressState = std::make_shared<AiEngine::Progress>();
+
+    auto *progress = new QProgressDialog(tr("Загрузка локальной ИИ-модели..."),
         tr("Отмена"), 0, 0, this);
     progress->setMinimumDuration(0);
     progress->setAutoClose(false);
     progress->setAutoReset(false);
     progress->setWindowModality(Qt::ApplicationModal);
+    progress->setWindowTitle(tr("Обработка нейросетью"));
+    progress->setMinimumWidth(390);
     auto canceled = std::make_shared<std::atomic_bool>(false);
     connect(progress, &QProgressDialog::canceled, watcher,
-            [canceled] { canceled->store(true, std::memory_order_relaxed); });
+            [this, canceled] {
+                canceled->store(true, std::memory_order_relaxed);
+                statusBar()->showMessage(tr("Отмена ИИ: ожидаем завершения текущего блока..."), 8000);
+            });
     // Preserve the image data before moving the patch to the completion callback.
     const QImage aiImage = selected->image;
     const QImage aiMask = selected->mask;
+    const double pixels = double(aiImage.width()) * aiImage.height();
+
+    auto *progressTimer = new QTimer(progress);
+    progressTimer->setInterval(250);
+    connect(progressTimer, &QTimer::timeout, progress,
+        [progress, progressState, canceled, elapsed, processingStart,
+         modeName, previousGpuRate, previousCpuRate, pixels] {
+        if (canceled->load(std::memory_order_relaxed)) return;
+        const auto phase = progressState->phase.load(std::memory_order_acquire);
+        const int total = progressState->total.load(std::memory_order_acquire);
+        const int completed = progressState->completed.load(std::memory_order_acquire);
+        const bool gpu = progressState->usingGpu.load(std::memory_order_acquire);
+        const QString processor = gpu ? QStringLiteral("GPU / DirectML") : QStringLiteral("CPU");
+        const qint64 elapsedMs = elapsed->elapsed();
+        const auto duration = [](qint64 ms) {
+            const qint64 seconds = std::max<qint64>(0, ms / 1000);
+            return QStringLiteral("%1:%2").arg(seconds / 60)
+                .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+        };
+        if (phase == AiEngine::Phase::Loading) {
+            *processingStart = -1;
+            progress->setRange(0, 0);
+            progress->setLabelText(modeName + QStringLiteral(" — загрузка модели...\nПрошло: ")
+                                   + duration(elapsedMs));
+            return;
+        }
+        if (*processingStart < 0) *processingStart = elapsedMs;
+        const qint64 processingMs = std::max<qint64>(0, elapsedMs - *processingStart);
+        if (phase == AiEngine::Phase::Blending || phase == AiEngine::Phase::Finished) {
+            progress->setRange(0, 100);
+            progress->setValue(phase == AiEngine::Phase::Finished ? 100 : 99);
+            progress->setLabelText(modeName + QStringLiteral(" — ") + processor
+                + QStringLiteral("\nСборка результата...\nПрошло: ") + duration(elapsedMs));
+            return;
+        }
+        if (total <= 0) return;
+        const double historicalRate = gpu ? previousGpuRate : previousCpuRate;
+        int percent = 0;
+        QString details;
+        QString remaining;
+        if (total > 1) {
+            percent = std::min(99, completed * 100 / total);
+            details = QStringLiteral("Готово %1 из %2 блоков — %3%")
+                .arg(completed).arg(total).arg(percent);
+            if (completed > 0 && completed < total)
+                remaining = QStringLiteral(" • осталось ≈ %1")
+                    .arg(duration(processingMs * (total - completed) / completed));
+        } else if (historicalRate > 0.0) {
+            const qint64 estimatedMs = qint64(historicalRate * pixels);
+            percent = estimatedMs > 0
+                ? int(std::clamp(100.0 * double(processingMs) / estimatedMs, 0.0, 95.0)) : 0;
+            details = QStringLiteral("≈ %1% (оценка по прошлому запуску)").arg(percent);
+            if (estimatedMs > processingMs)
+                remaining = QStringLiteral(" • осталось ≈ %1")
+                    .arg(duration(estimatedMs - processingMs));
+        } else {
+            details = QStringLiteral("1 блок — точный процент пока недоступен");
+        }
+        progress->setRange(0, 100);
+        progress->setValue(percent);
+        progress->setLabelText(modeName + QStringLiteral(" — ") + processor + "\n"
+            + details + QStringLiteral("\nПрошло: ") + duration(elapsedMs) + remaining);
+    });
+    progressTimer->start();
+
     connect(watcher, &QFutureWatcher<AiEngine::Result>::finished, this,
         [this, watcher, progress, selected = std::move(*selected),
-         canceled, documentId]() mutable {
+         canceled, documentId, progressTimer, elapsed, statsKey, pixels]() mutable {
         if (aiWatcher_ != watcher) return;
+        progressTimer->stop();
         const bool wasCanceled = canceled->load(std::memory_order_relaxed);
         progress->close();
         progress->deleteLater();
         aiWatcher_ = nullptr;
         applyAiButton_->setEnabled(true);
         const AiEngine::Result result = watcher->result();
+        if (!wasCanceled && result.error.isEmpty() && !result.image.isNull() && pixels > 0) {
+            QSettings settings;
+            const QString key = statsKey + (result.usedGpu ? "gpu_ms_per_pixel" : "cpu_ms_per_pixel");
+            const double observedRate = double(elapsed->elapsed()) / pixels;
+            const double previousRate = settings.value(key).toDouble();
+            settings.setValue(key, previousRate > 0.0
+                ? previousRate * 0.65 + observedRate * 0.35 : observedRate);
+        }
         if (wasCanceled) {
             statusBar()->showMessage(tr("ИИ-обработка отменена"), 5000);
         } else if (!result.error.isEmpty()) {
@@ -329,10 +425,8 @@ void MainWindow::startAiRestoration() {
         }
         watcher->deleteLater();
     });
-    const auto aiMode = mode == SphereView::Mode::AiSharpen
-        ? AiEngine::Mode::Sharpen : AiEngine::Mode::Inpaint;
-    auto future = QtConcurrent::run([aiMode, model, aiImage, aiMask, canceled] {
-        return AiEngine::run(aiMode, model, aiImage, aiMask, canceled);
+    auto future = QtConcurrent::run([aiMode, model, aiImage, aiMask, canceled, progressState] {
+        return AiEngine::run(aiMode, model, aiImage, aiMask, canceled, progressState);
     });
     watcher->setFuture(future);
     progress->show();
