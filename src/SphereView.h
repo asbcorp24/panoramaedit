@@ -17,7 +17,7 @@
 class SphereView final : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 public:
-    enum class Mode { Navigate, Brush, Eraser, CloneStamp };
+    enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch };
     explicit SphereView(QWidget *parent = nullptr);
     ~SphereView() override;
     bool openImage(const QString &path, QString *error = nullptr);
@@ -26,6 +26,7 @@ public:
     void setMode(Mode mode);
     void setBrushColor(const QColor &color) { brushColor_ = color; }
     void setBrushRadius(double degrees) { brushRadius_ = degrees; }
+    void setToolStrength(double value) { toolStrength_ = value; }
     void undo();
     void redo();
     bool isModified() const { return modified_; }
@@ -67,6 +68,8 @@ private:
     Mode mode_ = Mode::Navigate;
     QColor brushColor_{Qt::red};
     double brushRadius_ = 2.0;
+    double toolStrength_ = 0.5;
+    QImage liquifySnapshot_;
     float yaw_ = 0.0f;
     float pitch_ = 0.0f;
     float fov_ = 75.0f;
