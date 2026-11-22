@@ -13,6 +13,8 @@ qt_add_executable(PanoramaEdit WIN32
     src/MainWindow.cpp
     src/SphereView.h
     src/SphereView.cpp
+    src/SphericalLiquify.h
+    src/SphericalLiquify.cpp
     src/SphericalRaster.h
     src/SphericalRaster.cpp
 )
