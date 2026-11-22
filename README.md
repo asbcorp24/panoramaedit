@@ -32,6 +32,8 @@ Native Windows editor for equirectangular 360° × 180° panoramas (2:1), based 
 - Movable, detachable tool palette with Russian tool labels and menus.
 - Save composited result as PNG or JPEG.
 - Partial OpenGL texture updates during editing (large panorama performance is still a work in progress).
+- Liquify strokes now accumulate from the previous dab without making a full-size
+  image copy for each mouse movement; temporary memory depends on brush area.
 - Windows build artifacts from GitHub Actions.
 
 ## Build (Windows)
@@ -58,6 +60,15 @@ For deploying Qt DLLs next to the executable, run Qt's `windeployqt` on `build/R
 - **Undo/Redo**: Ctrl+Z / Ctrl+Y.
 
 The editor currently has one transparent edit layer, not a full Photoshop-style layer stack. Only the composited export is saved: opening the PNG/JPEG again does **not** restore the editable layer. The project format, masks, healing, brush feathering, layer stack and tiled 16K engine are future milestones. A single 16K RGBA panorama uses 512 MiB per full-size image, so avoid excessive strokes/history on memory-constrained PCs.
+
+### Производительность
+
+Видеокарта уже используется для отображения сферы через OpenGL. Инструменты
+«Палец», «Деформация», «Вздутие» и «Сжатие» пока рассчитываются процессором,
+но больше **не копируют всю панораму при каждом движении мыши**. Теперь
+вычисляются только пиксели области кисти, а изменения последовательных мазков
+накапливаются. Для максимальной скорости на 8K/16K следующим шагом нужен
+отдельный GPU-движок пластики (шейдеры и карта смещений).
 
 ## Tests
 

@@ -69,7 +69,6 @@ private:
     QColor brushColor_{Qt::red};
     double brushRadius_ = 2.0;
     double toolStrength_ = 0.5;
-    QImage liquifySnapshot_;
     float yaw_ = 0.0f;
     float pitch_ = 0.0f;
     float fov_ = 75.0f;

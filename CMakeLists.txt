@@ -28,6 +28,8 @@ if(BUILD_TESTING)
         tests/SphericalRasterTests.cpp
         src/SphericalRaster.cpp
         src/SphericalRaster.h
+        src/SphericalLiquify.cpp
+        src/SphericalLiquify.h
     )
     target_link_libraries(PanoramaEditRasterTests PRIVATE Qt6::Gui)
     add_test(NAME SphereRaster COMMAND PanoramaEditRasterTests)

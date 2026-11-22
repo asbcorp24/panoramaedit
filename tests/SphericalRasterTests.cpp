@@ -1,8 +1,10 @@
 #include "../src/SphericalRaster.h"
+#include "../src/SphericalLiquify.h"
 
 #include <QImage>
 #include <QQuaternion>
 #include <QVector3D>
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -69,6 +71,94 @@ int main() {
     require(qGreen(composite.pixel(200, 0)) == 255, "north pole brush failed");
     require(qGreen(composite.pixel(200, height - 1)) == 0, "north pole brush reached south pole");
 
-    std::cout << "All spherical raster tests passed.\n";
+    // Liquify now samples the live composite, never a full copy. Repeated
+    // bloat/pinch dabs must ACCUMULATE rather than spring back to the source.
+    QImage gradient(width, height, QImage::Format_RGBA8888);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const int red = std::min(255, std::abs(x - width / 2) * 10);
+            gradient.setPixelColor(x, y, QColor(red, 0, 0));
+        }
+    }
+    const int sampleX = width / 2 + 16, sampleY = height / 2;
+    const QVector3D warpCenter = pixelDirection(width / 2, sampleY, width, height);
+    layer = blankLayer();
+    composite = gradient;
+    const int initialRed = qRed(composite.pixel(sampleX, sampleY));
+    require(!SphericalLiquify::apply(layer, composite, composite, warpCenter, warpCenter,
+        12.0, 1.0, SphericalLiquify::Tool::Bloat).isEmpty(), "bloat did nothing");
+    const int firstBloat = qRed(composite.pixel(sampleX, sampleY));
+    SphericalLiquify::apply(layer, composite, composite, warpCenter, warpCenter,
+        12.0, 1.0, SphericalLiquify::Tool::Bloat);
+    const int secondBloat = qRed(composite.pixel(sampleX, sampleY));
+    require(firstBloat < initialRed && secondBloat < firstBloat,
+            "repeated bloat should expand further, not reset");
+    require(qRed(gradient.pixel(sampleX, sampleY)) == initialRed,
+            "liquify modified its source/base panorama");
+
+    layer = blankLayer();
+    composite = gradient;
+    SphericalLiquify::apply(layer, composite, composite, warpCenter, warpCenter,
+        12.0, 1.0, SphericalLiquify::Tool::Pinch);
+    const int firstPinch = qRed(composite.pixel(sampleX, sampleY));
+    SphericalLiquify::apply(layer, composite, composite, warpCenter, warpCenter,
+        12.0, 1.0, SphericalLiquify::Tool::Pinch);
+    const int secondPinch = qRed(composite.pixel(sampleX, sampleY));
+    require(firstPinch > initialRed && secondPinch > firstPinch,
+            "repeated pinch should contract further, not reset");
+
+    // A push across the seam must sample from the previous cursor position;
+    // the finger blends dragged pixels, unlike the stronger geometric push.
+    QImage seamSource(width, height, QImage::Format_RGBA8888);
+    seamSource.fill(Qt::black);
+    for (int y = height / 2 - 15; y <= height / 2 + 15; ++y)
+        for (int x = width - 12; x < width; ++x)
+            seamSource.setPixelColor(x, y, QColor(Qt::red));
+    const QVector3D seamDest = pixelDirection(2, height / 2, width, height);
+    const QVector3D seamPrev = pixelDirection(width - 4, height / 2, width, height);
+    layer = blankLayer();
+    composite = seamSource;
+    const QRegion seamRegion = SphericalLiquify::apply(layer, composite, composite,
+        seamDest, seamPrev, 12.0, 1.0, SphericalLiquify::Tool::Push);
+    require(!seamRegion.isEmpty(), "seam push changed nothing");
+    for (const QRect &rect : seamRegion)
+        require(rect.width() < width / 2, "seam push uploads an entire row");
+    const int pushedRed = qRed(composite.pixel(2, height / 2));
+    require(pushedRed > 100, "seam push did not move pixels across boundary");
+    require(qRed(composite.pixel(width / 2, height / 2)) == 0,
+            "seam push affected opposite longitude");
+
+    // Reading from an independent source copy must yield the same one-dab
+    // result as reading the live composite (no scan-order feedback).
+    const QImage referenceSource = seamSource.copy();
+    QImage referenceComposite = seamSource;
+    QImage referenceLayer = blankLayer();
+    SphericalLiquify::apply(referenceLayer, referenceComposite, referenceSource,
+        seamDest, seamPrev, 12.0, 1.0, SphericalLiquify::Tool::Push);
+    require(referenceComposite == composite, "liquify depends on in-place write order");
+
+    layer = blankLayer();
+    composite = seamSource;
+    SphericalLiquify::apply(layer, composite, composite, seamDest, seamPrev,
+        12.0, 1.0, SphericalLiquify::Tool::Smudge);
+    require(qRed(composite.pixel(2, height / 2)) > 0 &&
+            qRed(composite.pixel(2, height / 2)) < pushedRed,
+            "finger should blend rather than duplicate push");
+
+    QImage polarGradient(width, height, QImage::Format_RGBA8888);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x)
+            polarGradient.setPixelColor(x, y, QColor(std::min(y * 24, 255), 0, 0));
+    }
+    layer = blankLayer();
+    composite = polarGradient;
+    const auto north = pixelDirection(200, 0, width, height);
+    const auto northRegion = SphericalLiquify::apply(layer, composite, composite,
+        north, north, 8.0, 1.0, SphericalLiquify::Tool::Bloat);
+    require(!northRegion.isEmpty(), "liquify at north pole changed nothing");
+    require(composite.pixel(200, height - 1) == polarGradient.pixel(200, height - 1),
+            "north-pole liquify reached the south pole");
+
+    std::cout << "All spherical raster and cumulative liquify tests passed.\n";
     return EXIT_SUCCESS;
 }

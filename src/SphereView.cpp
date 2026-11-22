@@ -66,7 +66,6 @@ bool SphereView::openImage(const QString &path, QString *error) {
     editLayer_.fill(Qt::transparent);
     composite_ = baseImage_;
     cloneSnapshot_ = {};
-    liquifySnapshot_ = {};
     cloneSource_.reset();
     undoStack_.clear();
     redoStack_.clear();
@@ -261,7 +260,7 @@ void SphereView::paintAt(const QVector3D &direction) {
         if (mode_ == Mode::Pinch) tool = SphericalLiquify::Tool::Pinch;
         const QVector3D previous = lastStroke_.value_or(direction);
         const QRegion region = SphericalLiquify::apply(editLayer_, composite_,
-            liquifySnapshot_, direction, previous, brushRadius_, toolStrength_, tool);
+            composite_, direction, previous, brushRadius_, toolStrength_, tool);
         if (region.isEmpty()) return;
         partialTextureDirty_ += region;
         if (!strokeHasChanged_) {
@@ -322,9 +321,6 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
             cloneSnapshot_ = composite_;
             cloneRotation_ = QQuaternion::rotationTo(*lastStroke_, *cloneSource_);
         }
-        if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
-            mode_ == Mode::Bloat || mode_ == Mode::Pinch)
-            liquifySnapshot_ = composite_.copy();
         if (mode_ != Mode::Smudge && mode_ != Mode::Push)
             paintAt(*lastStroke_);
     } else dragging_ = true;
@@ -333,10 +329,6 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
 void SphereView::mouseMoveEvent(QMouseEvent *event) {
     if (painting_ && (event->buttons() & Qt::LeftButton)) {
         const auto next = directionFromScreen(event->position());
-        // Accumulate from the last rendered result, not the stroke-start image.
-        const bool liquify = mode_ == Mode::Smudge || mode_ == Mode::Push ||
-                             mode_ == Mode::Bloat || mode_ == Mode::Pinch;
-        if (liquify) liquifySnapshot_ = composite_.copy();
         if (lastStroke_) strokeBetween(*lastStroke_, next);
         else paintAt(next);
         lastStroke_ = next;
@@ -354,7 +346,6 @@ void SphereView::mouseReleaseEvent(QMouseEvent *event) {
         painting_ = false;
         lastStroke_.reset();
         cloneSnapshot_ = {};
-        liquifySnapshot_ = {};
     }
     dragging_ = false;
     event->accept();
