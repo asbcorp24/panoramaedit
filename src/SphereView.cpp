@@ -1,4 +1,5 @@
 #include "SphereView.h"
+#include "SphericalLiquify.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QOpenGLContext>
@@ -65,6 +66,7 @@ bool SphereView::openImage(const QString &path, QString *error) {
     editLayer_.fill(Qt::transparent);
     composite_ = baseImage_;
     cloneSnapshot_ = {};
+    liquifySnapshot_ = {};
     cloneSource_.reset();
     undoStack_.clear();
     redoStack_.clear();
@@ -251,6 +253,25 @@ QVector3D SphereView::directionFromScreen(const QPointF &pos) const {
 }
 void SphereView::paintAt(const QVector3D &direction) {
     if (editLayer_.isNull()) return;
+    if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
+        mode_ == Mode::Bloat || mode_ == Mode::Pinch) {
+        SphericalLiquify::Tool tool = SphericalLiquify::Tool::Smudge;
+        if (mode_ == Mode::Push) tool = SphericalLiquify::Tool::Push;
+        if (mode_ == Mode::Bloat) tool = SphericalLiquify::Tool::Bloat;
+        if (mode_ == Mode::Pinch) tool = SphericalLiquify::Tool::Pinch;
+        const QVector3D previous = lastStroke_.value_or(direction);
+        const QRegion region = SphericalLiquify::apply(editLayer_, composite_,
+            liquifySnapshot_, direction, previous, brushRadius_, toolStrength_, tool);
+        if (region.isEmpty()) return;
+        partialTextureDirty_ += region;
+        if (!strokeHasChanged_) {
+            strokeHasChanged_ = true;
+            revision_ = nextRevision_++;
+        }
+        setModified(revision_ != savedRevision_);
+        update();
+        return;
+    }
     SphericalRaster::Tool tool = SphericalRaster::Tool::Brush;
     if (mode_ == Mode::Eraser) tool = SphericalRaster::Tool::Eraser;
     if (mode_ == Mode::CloneStamp) tool = SphericalRaster::Tool::CloneStamp;
@@ -273,6 +294,10 @@ void SphereView::strokeBetween(const QVector3D &a, const QVector3D &b) {
     for (int i = 1; i <= steps; ++i) {
         const float t = float(i) / steps;
         // Normalized interpolation is accurate for short mouse-move segments.
+        if (mode_ == Mode::Smudge || mode_ == Mode::Push) {
+            const float prevT = float(i - 1) / steps;
+            lastStroke_ = ((1 - prevT) * a + prevT * b).normalized();
+        }
         paintAt(((1 - t) * a + t * b).normalized());
     }
 }
@@ -297,7 +322,11 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
             cloneSnapshot_ = composite_;
             cloneRotation_ = QQuaternion::rotationTo(*lastStroke_, *cloneSource_);
         }
-        paintAt(*lastStroke_);
+        if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
+            mode_ == Mode::Bloat || mode_ == Mode::Pinch)
+            liquifySnapshot_ = composite_;
+        if (mode_ != Mode::Smudge && mode_ != Mode::Push)
+            paintAt(*lastStroke_);
     } else dragging_ = true;
     event->accept();
 }
@@ -321,6 +350,7 @@ void SphereView::mouseReleaseEvent(QMouseEvent *event) {
         painting_ = false;
         lastStroke_.reset();
         cloneSnapshot_ = {};
+        liquifySnapshot_ = {};
     }
     dragging_ = false;
     event->accept();
