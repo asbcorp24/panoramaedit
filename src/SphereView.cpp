@@ -186,16 +186,23 @@ void SphereView::paintGL() {
     shader_->release();
 }
 QVector3D SphereView::directionFromScreen(const QPointF &pos) const {
-    const float aspect = float(width()) / std::max(1, height());
-    const float scale = std::tan(fov_ * rad * 0.5f);
-    const float nx = (2.0f * float(pos.x()) / std::max(1, width()) - 1.0f) * aspect * scale;
-    const float ny = (1.0f - 2.0f * float(pos.y()) / std::max(1, height())) * scale;
-    QVector3D direction(nx, ny, -1.0f);
-    direction.normalize();
-    QMatrix4x4 rotation;
-    rotation.rotate(yaw_, 0, 1, 0);
-    rotation.rotate(pitch_, 1, 0, 0);
-    return (rotation * QVector4D(direction, 0.0f)).toVector3D().normalized();
+    // Unproject through the exact same camera matrices used in paintGL().
+    // This keeps the brush aligned after zoom, yaw/pitch and window resizing.
+    QMatrix4x4 projection;
+    projection.perspective(fov_, float(width()) / std::max(1, height()), 0.01f, 10.0f);
+    QMatrix4x4 view;
+    view.rotate(-pitch_, 1, 0, 0);
+    view.rotate(-yaw_, 0, 1, 0);
+    bool invertible = false;
+    const QMatrix4x4 inverse = (projection * view).inverted(&invertible);
+    if (!invertible) return QVector3D(0, 0, -1);
+    const float nx = 2.0f * float(pos.x()) / std::max(1, width()) - 1.0f;
+    const float ny = 1.0f - 2.0f * float(pos.y()) / std::max(1, height());
+    const QVector4D nearPoint = inverse * QVector4D(nx, ny, -1.0f, 1.0f);
+    const QVector4D farPoint = inverse * QVector4D(nx, ny, 1.0f, 1.0f);
+    const QVector3D nearWorld = nearPoint.toVector3DAffine();
+    const QVector3D farWorld = farPoint.toVector3DAffine();
+    return (farWorld - nearWorld).normalized();
 }
 void SphereView::paintAt(const QVector3D &direction) {
     if (image_.isNull()) return;
