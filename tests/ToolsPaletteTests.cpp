@@ -1,6 +1,7 @@
 #include "../src/MainWindow.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QPushButton>
@@ -49,8 +50,20 @@ int main(int argc, char **argv) {
 
     bool foundBrush = false, foundFinger = false, foundWarp = false, foundBloat = false;
     bool foundSharpen = false, foundInpaint = false;
+    QToolButton *brushButton = nullptr;
+    QToolButton *navigateButton = nullptr;
+    int iconTools = 0;
     for (QToolButton *button : palette->findChildren<QToolButton *>()) {
-        const QString name = button->text();
+        const QString name = button->accessibleName();
+        require(button->toolButtonStyle() == Qt::ToolButtonIconOnly,
+                "tool shows text rather than icon");
+        require(!button->icon().isNull(), "tool has no icon");
+        require(button->defaultAction() != nullptr, "tool has no action");
+        require(!button->defaultAction()->shortcut().isEmpty(), "tool shortcut lost");
+        require(button->toolTip().contains(name), "Russian tool tooltip missing");
+        ++iconTools;
+        if (name == QStringLiteral("Кисть")) brushButton = button;
+        if (name == QStringLiteral("Навигация")) navigateButton = button;
         foundBrush |= name == QStringLiteral("Кисть");
         foundFinger |= name == QStringLiteral("Палец");
         foundWarp |= name == QStringLiteral("Деформация");
@@ -59,14 +72,32 @@ int main(int argc, char **argv) {
         foundInpaint |= name == QStringLiteral("ИИ-дорисовка");
     }
     require(foundBrush && foundFinger && foundWarp && foundBloat,
-            "Russian tool labels missing");
+            "Russian tool accessible names missing");
     require(foundSharpen && foundInpaint, "offline AI actions missing from palette");
-    bool foundApply = false, foundSeamRepair = false;
+    require(iconTools == 10, "unexpected icon tool count");
+    require(navigateButton && navigateButton->isChecked(),
+            "navigation icon should be selected by default");
+    require(brushButton && brushButton->toolTip().contains("(B)"),
+            "brush shortcut missing from tooltip");
+    brushButton->click();
+    require(brushButton->isChecked() && !navigateButton->isChecked(),
+            "icon selection did not switch to brush");
+    bool foundApply = false, foundSeamRepair = false, foundColor = false, foundClear = false;
+    int iconActions = 0;
     for (QPushButton *button : palette->findChildren<QPushButton *>()) {
-        foundApply |= button->text() == QStringLiteral("Применить ИИ к выделению");
-        foundSeamRepair |= button->text() == QStringLiteral("Сгладить шов 0°/360°");
+        require(button->text().isEmpty(), "action button displays text");
+        require(!button->icon().isNull(), "action button has no icon");
+        require(button->toolTip().contains(button->accessibleName()),
+                "Russian action tooltip missing");
+        const QString name = button->accessibleName();
+        foundApply |= name == QStringLiteral("Применить ИИ к выделению");
+        foundSeamRepair |= name == QStringLiteral("Сгладить шов 0°/360°");
+        foundColor |= name == QStringLiteral("Цвет кисти");
+        foundClear |= name == QStringLiteral("Очистить ИИ-выделение");
+        ++iconActions;
     }
-    require(foundApply && foundSeamRepair, "AI apply/seam repair controls missing");
+    require(iconActions == 4 && foundApply && foundSeamRepair && foundColor && foundClear,
+            "icon-only AI/color/seam controls missing");
 
     std::cout << "Tools palette and manual radius tests passed.\n";
     return EXIT_SUCCESS;

@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "SphereView.h"
 #include "AiEngine.h"
+#include "ToolIcons.h"
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -16,6 +17,7 @@
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPalette>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -66,69 +68,101 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     auto *buttons = new QGridLayout();
     buttons->setHorizontalSpacing(6);
     buttons->setVerticalSpacing(6);
+    buttons->setAlignment(Qt::AlignLeft);
     panelLayout->addLayout(buttons);
 
+    const bool darkPalette = panel->palette().color(QPalette::Window).lightness() < 128;
+    const QString hoverColor = darkPalette ? "#284c66" : "#d7ecfc";
+    const QString checkedColor = darkPalette ? "#1c527a" : "#afdbfa";
+    const QString iconButtonStyle = QString(
+        "QToolButton { border: 1px solid palette(mid); border-radius: 7px; "
+        "background: palette(button); padding: 4px; }"
+        "QToolButton:hover { background: %1; border-color: #348ec5; }"
+        "QToolButton:checked { background: %2; border: 2px solid #167db8; }"
+        "QToolButton:pressed { background: %1; }").arg(hoverColor, checkedColor);
+
     auto *group = new QActionGroup(this);
-    const auto addTool = [this, panel, buttons, group](const QString &name,
+    const auto addTool = [this, panel, buttons, group, &iconButtonStyle](const QString &name,
             const QString &hint, const QString &shortcut, SphereView::Mode mode,
-            int row, int column) -> QAction* {
+            ToolIcons::Kind icon, int row, int column) -> QAction* {
         auto *action = new QAction(name, this);
         action->setCheckable(true);
-        action->setToolTip(hint);
+        action->setIcon(ToolIcons::make(icon));
+        const QString tooltip = tr("%1 (%2)\n%3").arg(name, shortcut, hint);
+        action->setToolTip(tooltip);
+        action->setStatusTip(hint);
         action->setShortcut(QKeySequence(shortcut));
         action->setShortcutContext(Qt::ApplicationShortcut);
         group->addAction(action);
         addAction(action);
         auto *button = new QToolButton(panel);
         button->setDefaultAction(action);
-        button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        button->setMinimumWidth(120);
-        button->setMinimumHeight(32);
+        button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        button->setIconSize(QSize(29, 29));
+        button->setFixedSize(48, 46);
+        button->setStyleSheet(iconButtonStyle);
+        button->setToolTip(tooltip);
+        button->setAccessibleName(name);
+        button->setAccessibleDescription(hint);
         buttons->addWidget(button, row, column);
         connect(action, &QAction::triggered, this, [this, mode] { view_->setMode(mode); });
         return action;
     };
 
-    navigateAction_ = addTool(tr("Навигация"), tr("Поворачивать сферу (N)"),
-                              "N", SphereView::Mode::Navigate, 0, 0);
-    brushAction_ = addTool(tr("Кисть"), tr("Рисовать на сфере (B)"),
-                           "B", SphereView::Mode::Brush, 0, 1);
-    eraserAction_ = addTool(tr("Ластик"), tr("Стереть изменения (E)"),
-                            "E", SphereView::Mode::Eraser, 1, 0);
-    stampAction_ = addTool(tr("Штамп"), tr("Ctrl + щелчок: выбрать образец (S)"),
-                           "S", SphereView::Mode::CloneStamp, 1, 1);
+    navigateAction_ = addTool(tr("Навигация"), tr("Поворачивать сферу"),
+                              "N", SphereView::Mode::Navigate, ToolIcons::Kind::Navigate, 0, 0);
+    brushAction_ = addTool(tr("Кисть"), tr("Рисовать непосредственно на сфере"),
+                           "B", SphereView::Mode::Brush, ToolIcons::Kind::Brush, 0, 1);
+    eraserAction_ = addTool(tr("Ластик"), tr("Стереть внесённые изменения"),
+                            "E", SphereView::Mode::Eraser, ToolIcons::Kind::Eraser, 0, 2);
+    stampAction_ = addTool(tr("Штамп"), tr("Ctrl + щелчок: выбрать образец для копирования"),
+                           "S", SphereView::Mode::CloneStamp, ToolIcons::Kind::Stamp, 0, 3);
     navigateAction_->setChecked(true);
-    addTool(tr("Палец"), tr("Размазывать пиксели (F)"),
-            "F", SphereView::Mode::Smudge, 2, 0);
-    addTool(tr("Деформация"), tr("Тянуть изображение вслед за курсором (D)"),
-            "D", SphereView::Mode::Push, 2, 1);
-    addTool(tr("Вздутие"), tr("Расширить область под кистью (I)"),
-            "I", SphereView::Mode::Bloat, 3, 0);
-    addTool(tr("Сжатие"), tr("Сжать область к центру кисти (C)"),
-            "C", SphereView::Mode::Pinch, 3, 1);
-    addTool(tr("ИИ-резкость"), tr("Выделите размытую область для улучшения (U)"),
-            "U", SphereView::Mode::AiSharpen, 4, 0);
-    addTool(tr("ИИ-дорисовка"), tr("Выделите участок, который нужно заполнить фоном (J)"),
-            "J", SphereView::Mode::AiInpaint, 4, 1);
+    addTool(tr("Палец"), tr("Размазывать пиксели кистью"),
+            "F", SphereView::Mode::Smudge, ToolIcons::Kind::Smudge, 0, 4);
+    addTool(tr("Деформация"), tr("Тянуть изображение вслед за курсором"),
+            "D", SphereView::Mode::Push, ToolIcons::Kind::Push, 1, 0);
+    addTool(tr("Вздутие"), tr("Расширить область под кистью"),
+            "I", SphereView::Mode::Bloat, ToolIcons::Kind::Bloat, 1, 1);
+    addTool(tr("Сжатие"), tr("Сжать область к центру кисти"),
+            "C", SphereView::Mode::Pinch, ToolIcons::Kind::Pinch, 1, 2);
+    addTool(tr("ИИ-резкость"), tr("Выделите размытую область для улучшения"),
+            "U", SphereView::Mode::AiSharpen, ToolIcons::Kind::Sharpen, 1, 3);
+    addTool(tr("ИИ-дорисовка"), tr("Выделите участок, который нужно заполнить фоном"),
+            "J", SphereView::Mode::AiInpaint, ToolIcons::Kind::Inpaint, 1, 4);
 
-    auto *color = new QPushButton(tr("Цвет кисти..."), panel);
-    color->setMinimumHeight(32);
-    buttons->addWidget(color, 5, 0, 1, 2);
+    const auto styleActionButton = [buttons](QPushButton *button, ToolIcons::Kind icon,
+                                             const QString &name, const QString &hint,
+                                             int column) {
+        button->setText({});
+        button->setIcon(ToolIcons::make(icon));
+        button->setIconSize(QSize(29, 29));
+        button->setFixedSize(48, 46);
+        button->setAccessibleName(name);
+        button->setAccessibleDescription(hint);
+        button->setToolTip(name + "\n" + hint);
+        buttons->addWidget(button, 2, column);
+    };
+
+    auto *color = new QPushButton(panel);
+    styleActionButton(color, ToolIcons::Kind::Color, tr("Цвет кисти"),
+                      tr("Выбрать цвет рисования"), 0);
     connect(color, &QPushButton::clicked, this, [this] {
         const QColor chosen = QColorDialog::getColor(Qt::red, this, tr("Цвет кисти"));
         if (chosen.isValid()) view_->setBrushColor(chosen);
     });
-    applyAiButton_ = new QPushButton(tr("Применить ИИ к выделению"), panel);
-    applyAiButton_->setMinimumHeight(34);
-    applyAiButton_->setToolTip(tr("Обработать выделенную область локальной нейросетью"));
-    buttons->addWidget(applyAiButton_, 6, 0, 1, 2);
+    applyAiButton_ = new QPushButton(panel);
+    styleActionButton(applyAiButton_, ToolIcons::Kind::ApplyAi,
+                      tr("Применить ИИ к выделению"),
+                      tr("Обработать выделенный участок локальной нейросетью"), 1);
     connect(applyAiButton_, &QPushButton::clicked, this, &MainWindow::startAiRestoration);
-    auto *clearAi = new QPushButton(tr("Очистить ИИ-выделение"), panel);
-    buttons->addWidget(clearAi, 7, 0, 1, 2);
+    auto *clearAi = new QPushButton(panel);
+    styleActionButton(clearAi, ToolIcons::Kind::ClearAi,
+                      tr("Очистить ИИ-выделение"), tr("Убрать маску выделения"), 2);
     connect(clearAi, &QPushButton::clicked, view_, &SphereView::clearAiSelection);
-    auto *seam = new QPushButton(tr("Сгладить шов 0°/360°"), panel);
-    seam->setToolTip(tr("Мягко свести левый и правый края. Ширина — радиус кисти."));
-    buttons->addWidget(seam, 8, 0, 1, 2);
+    auto *seam = new QPushButton(panel);
+    styleActionButton(seam, ToolIcons::Kind::Seam, tr("Сгладить шов 0°/360°"),
+                      tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
     panelLayout->addWidget(new QLabel(tr("Радиус кисти (градусы):"), panel));

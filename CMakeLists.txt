@@ -67,6 +67,8 @@ qt_add_executable(PanoramaEdit WIN32
     src/main.cpp
     src/MainWindow.h
     src/MainWindow.cpp
+    src/ToolIcons.h
+    src/ToolIcons.cpp
     src/AiEngine.h
     src/AiEngine.cpp
     src/SphereView.h
@@ -120,6 +122,8 @@ if(BUILD_TESTING)
         tests/ToolsPaletteTests.cpp
         src/MainWindow.h
         src/MainWindow.cpp
+        src/ToolIcons.h
+        src/ToolIcons.cpp
         src/AiEngine.h
         src/AiEngine.cpp
         src/SphereView.h
