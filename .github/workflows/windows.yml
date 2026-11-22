@@ -1,0 +1,33 @@
+name: Windows EXE
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: 'qtshadertools'
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Deploy Qt
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item build/Release/PanoramaEdit.exe package/
+          windeployqt --release --compiler-runtime package/PanoramaEdit.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PanoramaEdit-Windows-x64
+          path: package/
