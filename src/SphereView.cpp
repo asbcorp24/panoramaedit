@@ -49,8 +49,15 @@ bool SphereView::openImage(const QString &path, QString *error) {
         if (error) *error = tr("Image could not be decoded: %1").arg(path);
         return false;
     }
-    if (loaded.width() != 2 * loaded.height()) {
-        if (error) *error = tr("Expected a 2:1 equirectangular panorama, got %1 × %2.").arg(loaded.width()).arg(loaded.height());
+    // Some panorama exporters round the width/height or retain a few extra
+    // pixels. Keep the original image and map it over the whole sphere.
+    // Only clearly non-panoramic aspect ratios are rejected.
+    const double aspect = double(loaded.width()) / loaded.height();
+    constexpr double expectedAspect = 2.0;
+    constexpr double allowedRelativeDeviation = 0.05; // 5%
+    if (std::abs(aspect / expectedAspect - 1.0) > allowedRelativeDeviation) {
+        if (error) *error = tr("Expected an approximately 2:1 panorama (within 5%%), got %1 × %2.")
+            .arg(loaded.width()).arg(loaded.height());
         return false;
     }
     baseImage_ = loaded.convertToFormat(QImage::Format_RGBA8888);
