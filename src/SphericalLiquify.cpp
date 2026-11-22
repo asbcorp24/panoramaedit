@@ -35,6 +35,7 @@ QRegion apply(QImage &layer, QImage &composite, const QImage &source,
         const int rx = int(std::ceil(span * w / (2.0 * PI))) + 2;
         const bool all = rx >= w / 2;
         const int first = all ? 0 : cx - rx, last = all ? w - 1 : cx + rx;
+        int changedFirst = -1, changedLast = -1;
         uchar *dst = layer.scanLine(y);
         uchar *visible = composite.scanLine(y);
         for (int xi = first; xi <= last; ++xi) {
@@ -65,7 +66,12 @@ QRegion apply(QImage &layer, QImage &composite, const QImage &source,
             uchar *shown = visible + x * 4;
             shown[0] = out[0]; shown[1] = out[1];
             shown[2] = out[2]; shown[3] = 255;
-            dirty += QRect(x, y, 1, 1);
+            if (changedFirst < 0) changedFirst = x;
+            changedLast = x;
+        }
+        if (changedFirst >= 0) {
+            if (all || changedFirst <= changedLast) dirty += QRect(changedFirst, y, changedLast - changedFirst + 1, 1);
+            else dirty += QRect(0, y, w, 1);
         }
     }
     return dirty;
