@@ -7,27 +7,57 @@ starts this script asynchronously with a venv created by setup_ai_windows.bat.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+
+def create_session(model_path: Path, validate_only: bool = False):
+    import onnxruntime as ort
+
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Не найдена локальная модель: {model_path}")
+    options = ort.SessionOptions()
+    options.enable_mem_pattern = False
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    available = ort.get_available_providers()
+    providers = ("CPUExecutionProvider",) if validate_only else tuple(
+        (["DmlExecutionProvider"] if "DmlExecutionProvider" in available else [])
+        + ["CPUExecutionProvider"])
+    try:
+        return ort.InferenceSession(str(model_path), sess_options=options,
+                                    providers=list(providers))
+    except Exception as exc:
+        reason = str(exc)
+        if "tensor(float16)" in reason and "tensor(float)" in reason:
+            raise RuntimeError(
+                "Несовместимая FP16-модель (смешаны float32/float16). "
+                "Запустите обновлённый setup_ai_windows.bat: он заменит deblur.onnx "
+                "на проверенную FP32-версию. " + reason) from exc
+        raise
+
+
+def validate_model(mode: str, model_path: Path) -> None:
+    session = create_session(model_path, validate_only=True)
+    inputs = session.get_inputs()
+    if mode == "sharpen":
+        if len(inputs) != 1 or len(inputs[0].shape) != 4:
+            raise ValueError("NAFNet: ожидался один четырёхмерный RGB-тензор")
+    elif mode == "inpaint":
+        if not {"image", "mask"}.issubset({inp.name for inp in inputs}):
+            raise ValueError("LaMa: отсутствуют входы image/mask")
+    else:
+        raise ValueError(f"Неизвестный режим: {mode}")
+    print(f"OK: {mode}, {model_path.name}, ONNX session loaded")
 
 
 def process(mode: str, image_path: Path, mask_path: Path, model_path: Path,
             output_path: Path) -> None:
     import numpy as np
-    import onnxruntime as ort
     from PIL import Image
 
-    if not model_path.is_file():
-        raise FileNotFoundError(f"Local ONNX model not found: {model_path}")
     original = Image.open(image_path).convert("RGB")
     original_size = original.size
-    session_options = ort.SessionOptions()
-    session_options.enable_mem_pattern = False
-    session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    available = ort.get_available_providers()
-    providers = (["DmlExecutionProvider"] if "DmlExecutionProvider" in available else [])
-    providers.append("CPUExecutionProvider")
-    session = ort.InferenceSession(str(model_path), sess_options=session_options,
-                                   providers=providers)
+    session = create_session(model_path)
 
     if mode == "inpaint":
         # gumka/lama-onnx: fixed 512², input RGB 0..1, mask 0/1,
@@ -81,12 +111,23 @@ def process(mode: str, image_path: Path, mask_path: Path, model_path: Path,
 def main() -> None:
     parser = argparse.ArgumentParser(description="PanoramaEdit offline ONNX restoration worker")
     parser.add_argument("--mode", required=True, choices=("sharpen", "inpaint"))
-    parser.add_argument("--image", required=True, type=Path)
-    parser.add_argument("--mask", required=True, type=Path)
+    parser.add_argument("--image", type=Path)
+    parser.add_argument("--mask", type=Path)
     parser.add_argument("--model", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--validate-model", action="store_true",
+                        help="Check ONNX model loading without opening an image")
     args = parser.parse_args()
-    process(args.mode, args.image, args.mask, args.model, args.output)
+    try:
+        if args.validate_model:
+            validate_model(args.mode, args.model)
+        else:
+            if not all((args.image, args.mask, args.output)):
+                parser.error("--image, --mask and --output are required for inference")
+            process(args.mode, args.image, args.mask, args.model, args.output)
+    except Exception as exc:
+        print(f"Ошибка локальной ИИ-модели: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

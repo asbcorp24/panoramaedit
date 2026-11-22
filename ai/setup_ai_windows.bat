@@ -6,7 +6,8 @@ echo ====================================================
 echo   PanoramaEdit - one-time offline AI installation
 echo ====================================================
 echo.
-echo This setup downloads Python packages and two model weights ONCE.
+echo This setup installs Python packages and validated ONNX models.
+echo Existing incompatible FP16 weights will be kept as a backup.
 echo After setup, editing does not require the internet.
 echo.
 
@@ -29,13 +30,28 @@ echo [1/3] Installing local AI inference libraries...
 if errorlevel 1 goto :fail
 
 if not exist "models" mkdir "models"
-echo [2/3] Downloading NAFNet deblurring model, about 33 MB...
+if exist "models\deblur.onnx" (
+  rem Older releases used a broken 33 MB FP16 conversion of NAFNet.
+  rem First reject that size, then ask ONNX Runtime to load existing FP32.
+  "ai_runtime\Scripts\python.exe" -c "from pathlib import Path; import sys; sys.exit(0 if Path('models/deblur.onnx').stat().st_size > 60000000 else 1)"
+  if not errorlevel 1 (
+    "ai_runtime\Scripts\python.exe" ai_worker.py --mode sharpen --model "models\deblur.onnx" --validate-model
+  )
+  if errorlevel 1 (
+    echo [FIX] Found an old or invalid deblur model. Saving a backup...
+    ren "models\deblur.onnx" "deblur-incompatible-%RANDOM%.onnx"
+    if errorlevel 1 goto :fail
+  )
+)
+echo [2/3] Installing validated NAFNet FP32 deblurring model, about 69 MB...
 if not exist "models\deblur.onnx" (
-  curl.exe -fL --retry 3 --output "models\deblur.onnx.part" "https://github.com/rock1110/nafnet-onnx/releases/download/v1/nafnet-width32-gopro-fp16.onnx"
+  curl.exe -fL --retry 3 --output "models\deblur.onnx.part" "https://raw.githubusercontent.com/rock1110/nafnet-onnx/main/nafnet-width32-gopro-fp32.onnx"
   if errorlevel 1 goto :fail
   move /Y "models\deblur.onnx.part" "models\deblur.onnx" >nul
   if errorlevel 1 goto :fail
 )
+"ai_runtime\Scripts\python.exe" ai_worker.py --mode sharpen --model "models\deblur.onnx" --validate-model
+if errorlevel 1 goto :fail
 echo [3/3] Downloading LaMa inpainting model, about 208 MB...
 if not exist "models\inpaint.onnx" (
   curl.exe -fL --retry 3 --output "models\inpaint.onnx.part" "https://huggingface.co/gumka/lama-onnx/resolve/main/lama_fp32.onnx?download=true"
@@ -44,6 +60,8 @@ if not exist "models\inpaint.onnx" (
   if errorlevel 1 goto :fail
 )
 "ai_runtime\Scripts\python.exe" -c "from pathlib import Path; assert Path('models/deblur.onnx').stat().st_size > 20000000; assert Path('models/inpaint.onnx').stat().st_size > 150000000"
+if errorlevel 1 goto :fail
+"ai_runtime\Scripts\python.exe" ai_worker.py --mode inpaint --model "models\inpaint.onnx" --validate-model
 if errorlevel 1 goto :fail
 echo.
 echo [SUCCESS] The two AI modes are available without internet.
