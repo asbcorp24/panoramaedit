@@ -1,3 +1,5 @@
+#include <QPushButton>
+#include <QMessageBox>
 #include "AiEngine.h"
 #include <QCoreApplication>
 #include <QFutureWatcher>
@@ -920,4 +922,27 @@ void SphereView::selectSeamForAi(){
     }
     hasAiSelection_=true;fullMaskDirty_=true;showSeam();
     emit statusMessage(tr("Центральный участок шва выделен. Нажмите «Применить ИИ»."));
+}
+
+void SphereView::previewSeam(){
+    if(!hasImage()||toolStrength_<=0)return;
+    QImage layer=editLayer_, image=composite_;
+    auto dirty=SphericalAI::smartSeam(layer,image,std::max(2,int(brushRadius_*baseImage_.width()/360)),toolStrength_);
+    if(dirty.isEmpty())return;
+    showSeam();
+    // Modal comparison keeps editing and saving disabled until a decision.
+    QImage original=composite_;
+    QMessageBox dialog(QMessageBox::Question,tr("Предпросмотр шва"),tr("Сравните результат на сфере."),QMessageBox::NoButton,this);
+    auto *toggle=dialog.addButton(tr("До / После"),QMessageBox::ActionRole);
+    auto *apply=dialog.addButton(tr("Применить"),QMessageBox::AcceptRole);
+    dialog.addButton(tr("Отмена"),QMessageBox::RejectRole);
+    bool after=true;
+    composite_=image;fullTextureDirty_=true;update();
+    connect(toggle,&QAbstractButton::clicked,&dialog,[&]{after=!after;composite_=after?image:original;fullTextureDirty_=true;update();});
+    dialog.exec();
+    composite_=original;fullTextureDirty_=true;
+    if(dialog.clickedButton()==apply){
+        pushUndo();editLayer_=layer;composite_=image;revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+    }
+    update();
 }
