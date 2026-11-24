@@ -135,6 +135,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
             "J", SphereView::Mode::AiInpaint, ToolIcons::Kind::Inpaint, 1, 4);
 
     addTool(tr("Округление"), tr("Щёлкните центр и точки по контуру объекта, затем нажмите кнопку применения"), "R", SphereView::Mode::RoundObject, ToolIcons::Kind::Bloat, 3, 0);
+    addTool(tr("Сетка"), tr("Выберите центр и перемещайте внутренние узлы"), "M", SphereView::Mode::MeshWarp, ToolIcons::Kind::Push, 4, 0);
     const auto styleActionButton = [buttons](QPushButton *button, ToolIcons::Kind icon,
                                              const QString &name, const QString &hint,
                                              int column) {
@@ -176,6 +177,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     roundApply->setFixedSize(48,46);
     buttons->addWidget(roundApply,3,1);
     connect(roundApply, &QPushButton::clicked, view_, &SphereView::roundObject);
+    auto *meshApply = new QPushButton(tr("Применить сетку"), panel);
+    auto *meshReset = new QPushButton(tr("Сбросить сетку"), panel);
+    panelLayout->addWidget(meshApply);
+    panelLayout->addWidget(meshReset);
+    connect(meshApply, &QPushButton::clicked, view_, &SphereView::applyMesh);
+    connect(meshReset, &QPushButton::clicked, view_, &SphereView::resetMesh);
     panelLayout->addWidget(new QLabel(tr("Радиус кисти (градусы):"), panel));
     auto *radiusRow = new QHBoxLayout();
     auto *radius = new QSlider(Qt::Horizontal, panel);
