@@ -136,6 +136,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     addTool(tr("Округление"), tr("Щёлкните центр и точки по контуру объекта, затем нажмите кнопку применения"), "R", SphereView::Mode::RoundObject, ToolIcons::Kind::Bloat, 3, 0);
     addTool(tr("Сетка"), tr("Выберите центр и перемещайте внутренние узлы"), "M", SphereView::Mode::MeshWarp, ToolIcons::Kind::Push, 4, 0);
+    addTool(tr("Выпрямление"), tr("Отметьте точки вдоль искривлённой линии"), "L", SphereView::Mode::Straighten, ToolIcons::Kind::Push, 4, 1);
     const auto styleActionButton = [buttons](QPushButton *button, ToolIcons::Kind icon,
                                              const QString &name, const QString &hint,
                                              int column) {
@@ -177,6 +178,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     roundApply->setFixedSize(48,46);
     buttons->addWidget(roundApply,3,1);
     connect(roundApply, &QPushButton::clicked, view_, &SphereView::roundObject);
+    auto *lineApply = new QPushButton(tr("Выпрямить линию"), panel);
+    auto *lineReset = new QPushButton(tr("Сбросить линию"), panel);
+    panelLayout->addWidget(lineApply);
+    panelLayout->addWidget(lineReset);
+    connect(lineApply, &QPushButton::clicked, view_, &SphereView::straightenLine);
+    connect(lineReset, &QPushButton::clicked, view_, &SphereView::resetLine);
     auto *meshApply = new QPushButton(tr("Применить сетку"), panel);
     auto *meshReset = new QPushButton(tr("Сбросить сетку"), panel);
     panelLayout->addWidget(meshApply);
