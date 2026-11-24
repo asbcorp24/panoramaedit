@@ -54,6 +54,7 @@ void SphereView::setMode(Mode mode) {
 }
 void SphereView::setBrushRadius(double degrees) {
     brushRadius_ = std::clamp(degrees, 0.1, 30.0);
+    if (meshCenter_) meshExtent_ = std::tan(float(brushRadius_) * rad);
     update(); // The outline follows manual radius input/slider immediately.
 }
 void SphereView::setModified(bool modified) {
@@ -122,6 +123,7 @@ bool SphereView::openImage(const QString &path, QString *error) {
     return true;
 }
 bool SphereView::saveImage(const QString &path) {
+    if (meshCenter_) applyMesh();
     if (composite_.isNull() || !composite_.save(path)) return false;
     savedRevision_ = revision_;
     setModified(false);
@@ -141,6 +143,7 @@ void SphereView::refreshComposite() {
     update();
 }
 void SphereView::undo() {
+    if (meshCenter_) { resetMesh(); return; }
     if (undoStack_.empty() || editLayer_.isNull()) return;
     redoStack_.push_back({editLayer_, revision_});
     const auto prior = undoStack_.takeLast();
@@ -149,6 +152,7 @@ void SphereView::undo() {
     refreshComposite();
 }
 void SphereView::redo() {
+    resetMesh();
     if (redoStack_.empty() || editLayer_.isNull()) return;
     undoStack_.push_back({editLayer_, revision_});
     const auto later = redoStack_.takeLast();
