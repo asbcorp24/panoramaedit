@@ -1,3 +1,5 @@
+#include <QSignalBlocker>
+#include <QLabel>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -590,6 +592,9 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if(levelPreview_ && event->button()==Qt::LeftButton){
+        levelDragging_=true;levelAnchor_=cursorDirection_;event->accept();return;
+    }
     if(mode_==Mode::SmartSelect && event->button()==Qt::LeftButton && hasImage()){
         smartSelect(cursorDirection_,event->modifiers() & Qt::AltModifier ? -1 : event->modifiers() & Qt::ShiftModifier ? 1 : 0);
         event->accept();return;
@@ -650,6 +655,20 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
 }
 void SphereView::mouseMoveEvent(QMouseEvent *event) {
     cursorInside_ = rect().contains(event->pos());
+    if(levelPreview_ && levelDragging_ && (event->buttons() & Qt::LeftButton)){
+        const auto next=directionFromScreen(event->position());
+        QQuaternion delta;
+        if(event->modifiers() & Qt::ShiftModifier){
+            const QPointF center(width()/2.0,height()/2.0);
+            const QPointF a=QPointF(lastMouse_)-center,b=event->position()-center;
+            if(a.manhattanLength()>5 && b.manhattanLength()>5){
+                float angle=float((std::atan2(b.y(),b.x())-std::atan2(a.y(),a.x()))/rad);
+                delta=QQuaternion::fromAxisAndAngle(directionFromScreen(center),-angle);
+            }
+        }else delta=QQuaternion::rotationTo(next,levelAnchor_);
+        levelRotation_=(levelRotation_*delta).normalized();levelAnchor_=next;lastMouse_=event->pos();
+        levelRotationChanged();update();event->accept();return;
+    }
     if (mode_==Mode::MeshWarp && meshCenter_ && meshDrag_>=0 && (event->buttons() & Qt::LeftButton)) {
         auto d=directionFromScreen(event->position()); float z=QVector3D::dotProduct(d,*meshCenter_);
         if(z>0) {
@@ -676,6 +695,7 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
     event->accept();
 }
 void SphereView::mouseReleaseEvent(QMouseEvent *event) {
+    if(event->button()==Qt::LeftButton)levelDragging_=false;
     if (event->button() == Qt::LeftButton) {
         meshDrag_ = -1;
         painting_ = false;
@@ -1310,8 +1330,10 @@ void SphereView::manualLevelHorizon(){
     ++selectionRequest_;
     auto *dialog=new QDialog(this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowTitle(tr("Ручное выравнивание сферы"));
+    dialog->setWindowTitle(tr("Смещение текстуры по сфере"));
     auto *layout=new QFormLayout(dialog);
+    auto *hint=new QLabel(tr("ЛКМ — смещение текстуры; Shift+ЛКМ — крен; ПКМ — осмотр."),dialog);
+    hint->setWordWrap(true);layout->addRow(hint);
     QSlider *sliders[3];
     const QString labels[]={tr("Наклон X"),tr("Поворот Y"),tr("Крен Z")};
     for(int i=0;i<3;++i){
@@ -1325,11 +1347,16 @@ void SphereView::manualLevelHorizon(){
         levelRotation_=QQuaternion::fromEulerAngles(x->value()/10.f,y->value()/10.f,z->value()/10.f);update();
     };
     for(auto *slider:sliders)connect(slider,&QSlider::valueChanged,dialog,[refresh](int){refresh();});
+    connect(this,&SphereView::levelRotationChanged,dialog,[this,x=sliders[0],y=sliders[1],z=sliders[2]]{
+        const auto a=levelRotation_.toEulerAngles();
+        const QSignalBlocker bx(x),by(y),bz(z);
+        x->setValue(qRound(a.x()*10));y->setValue(qRound(a.y()*10));z->setValue(qRound(a.z()*10));
+    });
     connect(reset,&QPushButton::clicked,dialog,[x=sliders[0],y=sliders[1],z=sliders[2]]{x->setValue(0);y->setValue(0);z->setValue(0);});
     connect(buttons,&QDialogButtonBox::accepted,dialog,&QDialog::accept);
     connect(buttons,&QDialogButtonBox::rejected,dialog,&QDialog::reject);
     connect(dialog,&QDialog::finished,this,[=,this](int decision){
-        auto rotation=levelRotation_;levelPreview_=false;
+        auto rotation=levelRotation_;levelPreview_=false;levelDragging_=false;
         if(doc!=documentId_||rev!=revision_){update();return;}
         hasAiSelection_=maskVisible;
         if(decision==QDialog::Accepted && !rotation.isIdentity()){
