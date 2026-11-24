@@ -1,3 +1,7 @@
+#include "AiEngine.h"
+#include <QCoreApplication>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrentRun>
 #include "SphereView.h"
 #include "SphericalLiquify.h"
 #include <QMouseEvent>
@@ -543,6 +547,10 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if(mode_==Mode::SmartSelect && event->button()==Qt::LeftButton && hasImage()){
+        smartSelect(cursorDirection_,event->modifiers() & Qt::AltModifier ? -1 : event->modifiers() & Qt::ShiftModifier ? 1 : 0);
+        event->accept();return;
+    }
     if (mode_ == Mode::Straighten && event->button()==Qt::LeftButton && hasImage()) {
         if (linePoints_.size()<128) linePoints_.append(cursorDirection_);
         update(); event->accept(); return;
@@ -850,4 +858,40 @@ void SphereView::repairPole(){
     partialTextureDirty_+=QRect(0,poleView_>0?0:h-rows,w,rows);
     revision_=nextRevision_++;setModified(revision_!=savedRevision_);update();
     emit statusMessage(tr("Полюс сглажен. Ctrl+Z — отменить."));
+}
+
+void SphereView::smartSelect(const QVector3D &center,int operation){
+    const auto u=QVector3D::crossProduct(std::abs(center.y())<0.9f?QVector3D(0,1,0):QVector3D(1,0,0),center).normalized();
+    const auto v=QVector3D::crossProduct(center,u).normalized();
+    const float extent=std::tan(std::clamp(fov_*0.5f,15.f,55.f)*rad);
+    const QImage source=composite_;
+    const auto request=++selectionRequest_,doc=documentId_,rev=revision_;
+    const QString path=QCoreApplication::applicationDirPath()+"/models/sam_point.onnx";
+    auto *watcher=new QFutureWatcher<AiEngine::Result>(this);
+    connect(watcher,&QFutureWatcher<AiEngine::Result>::finished,this,[=,this]{
+        auto result=watcher->result();watcher->deleteLater();
+        if(request!=selectionRequest_||doc!=documentId_||rev!=revision_)return;
+        if(!result.error.isEmpty()||result.image.isNull()){emit statusMessage(result.error);return;}
+        if(operation==0||aiMask_.isNull()){aiMask_=QImage(source.size(),QImage::Format_Grayscale8);aiMask_.fill(0);}
+        const auto mask=result.image;
+        for(int y=0;y<source.height();++y)for(int x=0;x<source.width();++x){
+            auto d=SphericalRaster::pixelDirection(x,y,source.width(),source.height());
+            float z=QVector3D::dotProduct(d,center);if(z<=0)continue;
+            float px=QVector3D::dotProduct(d,u)/z/extent,py=QVector3D::dotProduct(d,v)/z/extent;
+            if(std::abs(px)>=1||std::abs(py)>=1)continue;
+            int mx=std::clamp(int((px+1)*0.5f*mask.width()),0,mask.width()-1);
+            int my=std::clamp(int((1-py)*0.5f*mask.height()),0,mask.height()-1);
+            if(mask.constScanLine(my)[mx]>127)aiMask_.scanLine(y)[x]=operation<0?0:255;
+        }
+        hasAiSelection_=true;fullMaskDirty_=true;update();emit statusMessage(tr("Умное выделение завершено."));
+    });
+    emit statusMessage(tr("SAM: выделение объекта…"));
+    watcher->setFuture(QtConcurrent::run([=]{
+        QImage patch(1024,1024,QImage::Format_RGB32);
+        for(int y=0;y<1024;++y)for(int x=0;x<1024;++x){
+            auto d=(center+extent*((2.f*(x+0.5f)/1024-1)*u+(1-2.f*(y+0.5f)/1024)*v)).normalized();
+            patch.setPixel(x,y,SphericalRaster::sampleDirection(source,d));
+        }
+        return AiEngine::segment(path,patch);
+    }));
 }
