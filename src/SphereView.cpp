@@ -895,3 +895,29 @@ void SphereView::smartSelect(const QVector3D &center,int operation){
         return AiEngine::segment(path,patch);
     }));
 }
+
+void SphereView::showSeam(){
+    showHorizon();pitch_=0; yaw_=180;cursorInside_=false;update();
+}
+void SphereView::smartSeam(){
+    if(!hasImage()||toolStrength_<=0)return;
+    pushUndo();
+    auto dirty=SphericalAI::smartSeam(editLayer_,composite_,std::max(2,int(brushRadius_*baseImage_.width()/360)),toolStrength_);
+    if(dirty.isEmpty())return;
+    partialTextureDirty_+=dirty;revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+    showSeam();emit statusMessage(tr("Умный шов: совмещение и цветокоррекция. Ctrl+Z — отменить."));
+}
+void SphereView::selectSeamForAi(){
+    if(!hasImage())return;
+    setMode(Mode::AiInpaint);
+    clearAiSelection();
+    aiMask_=QImage(baseImage_.size(),QImage::Format_Grayscale8);aiMask_.fill(0);
+    const int half=std::clamp(int(brushRadius_*baseImage_.width()/360),1,std::max(1,std::min(256,baseImage_.width()/4)));
+    const int height=std::min(768,baseImage_.height());
+    const int top=(baseImage_.height()-height)/2;
+    for(int y=top;y<top+height;++y)for(int d=0;d<half;++d){
+        aiMask_.scanLine(y)[d]=255;aiMask_.scanLine(y)[baseImage_.width()-1-d]=255;
+    }
+    hasAiSelection_=true;fullMaskDirty_=true;showSeam();
+    emit statusMessage(tr("Центральный участок шва выделен. Нажмите «Применить ИИ»."));
+}
