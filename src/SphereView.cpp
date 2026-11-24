@@ -1,3 +1,5 @@
+#include <QInputDialog>
+#include <QStringList>
 #include <QPushButton>
 #include <QMessageBox>
 #include "AiEngine.h"
@@ -945,4 +947,40 @@ void SphereView::previewSeam(){
         pushUndo();editLayer_=layer;composite_=image;revision_=nextRevision_++;setModified(revision_!=savedRevision_);
     }
     update();
+}
+
+void SphereView::diagnosePanorama(){
+    if(!hasImage())return;
+    const QImage img=composite_.scaled(1024,512,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
+    struct Issue{QString name;int x,y;double score;};
+    QVector<Issue> issues;
+    auto gray=[&](int x,int y){return qGray(img.pixel((x+1024)%1024,std::clamp(y,0,511)));};
+    for(int y=16;y<512;y+=32){
+        double seam=0,normal=0;int n=0;
+        for(int j=std::max(0,y-16);j<std::min(512,y+16);++j){
+            seam+=std::abs(gray(0,j)-gray(1023,j));
+            normal+=(std::abs(gray(0,j)-gray(1,j))+std::abs(gray(1023,j)-gray(1022,j)))*0.5;
+            ++n;
+        }
+        if(seam/n>18 && seam>2.5*(normal+n))issues.push_back({tr("Перепад на шве"),0,y,seam/n});
+    }
+    for(int y=32;y<480;y+=64)for(int x=32;x<1024;x+=64){
+        double edge=0,lap=0;int n=0;
+        for(int j=y-24;j<y+24;j+=2)for(int i=x-24;i<x+24;i+=2){
+            int c=gray(i,j);
+            edge+=std::abs(gray(i+1,j)-gray(i-1,j))+std::abs(gray(i,j+1)-gray(i,j-1));
+            lap+=std::abs(4*c-gray(i+1,j)-gray(i-1,j)-gray(i,j+1)-gray(i,j-1));++n;
+        }
+        if(edge/n>4 && lap/(edge+1)<0.18)issues.push_back({tr("Возможное размытие"),x,y,edge/(lap+1)});
+    }
+    if(issues.isEmpty()){emit statusMessage(tr("Диагностика: явных перепадов шва и подозрительного размытия не найдено."));return;}
+    QStringList choices;
+    for(const auto &i:issues)choices<<tr("%1 — долгота %2°, широта %3°").arg(i.name).arg(i.x*360.0/1024-180,0,'f',1).arg(90-i.y*180.0/512,0,'f',1);
+    bool ok=false;
+    QString choice=QInputDialog::getItem(this,tr("Диагностика панорамы"),tr("Подозрительные области (эвристическая оценка). Выберите область для просмотра:"),choices,0,false,&ok);
+    if(!ok)return;
+    int index=choices.indexOf(choice);if(index<0)return;
+    const auto i=issues[index];
+    showHorizon();yaw_=180.f-i.x*360.f/1024;pitch_=90.f-i.y*180.f/512;fov_=55;update();
+    emit statusMessage(i.name);
 }
