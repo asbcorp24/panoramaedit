@@ -1076,3 +1076,70 @@ bool SphereView::prepareObjectRemoval(){
     setMode(Mode::AiInpaint);
     update();return true;
 }
+
+void SphereView::autoLevelHorizon(){
+    if(!hasImage())return;
+    const QImage small=composite_.scaled(1024,512,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
+    // Fit a great-circle plane to strong near-equatorial horizontal edges.
+    struct Point { double a,b,z; };
+    std::vector<Point> points;
+    for(int x=8;x<1024;x+=16){
+        int best=0,by=256;
+        for(int y=170;y<=342;++y){
+            int g=0;
+            for(int dx=-3;dx<=3;++dx)
+                g+=std::abs(qGray(small.pixel(x+dx,y+2))-qGray(small.pixel(x+dx,y-2)));
+            if(g>best){best=g;by=y;}
+        }
+        if(best<245)continue;
+        double lon=(x+0.5)*2*PI/1024-PI;
+        double lat=PI/2-(by+0.5)*PI/512;
+        points.push_back({std::sin(lon),std::cos(lon),std::tan(lat)});
+    }
+    double a=0,b=0;
+    int count=0;
+    for(int pass=0;pass<4;++pass){
+        double aa=0,ab=0,bb=0,az=0,bz=0;count=0;
+        for(const auto &p:points){
+            if(pass && std::abs(p.z-a*p.a-b*p.b)>0.065)continue;
+            aa+=p.a*p.a;ab+=p.a*p.b;bb+=p.b*p.b;az+=p.a*p.z;bz+=p.b*p.z;++count;
+        }
+        double det=aa*bb-ab*ab;
+        if(count<24||det<1e-6)break;
+        a=(az*bb-bz*ab)/det;b=(bz*aa-az*ab)/det;
+    }
+    if(count<24||count<double(points.size())*0.65){
+        QMessageBox::information(this,tr("Горизонт"),tr("Не удалось надёжно определить горизонт. Панорама не изменена."));return;
+    }
+    QVector3D normal(float(-a),1.f,float(b));normal.normalize();
+    double tilt=std::acos(std::clamp(double(normal.y()),-1.0,1.0))/rad;
+    if(tilt<0.25){emit statusMessage(tr("Заметного наклона горизонта не найдено."));return;}
+    if(tilt>25){emit statusMessage(tr("Слишком большой или недостоверный наклон. Коррекция отменена."));return;}
+    bool ok=false;
+    double percent=QInputDialog::getDouble(this,tr("Выравнивание горизонта"),
+        tr("Оценка наклона: %1°. Сила коррекции (%):").arg(tilt,0,'f',1),100,0,100,0,&ok);
+    if(!ok||percent<=0)return;
+    const QQuaternion rotation=QQuaternion::slerp(QQuaternion(),QQuaternion::rotationTo(QVector3D(0,1,0),normal),float(percent/100));
+    const QImage original=composite_;
+    QImage result(original.size(),QImage::Format_RGBA8888);
+    if(result.isNull())return;
+    for(int y=0;y<result.height();++y)for(int x=0;x<result.width();++x){
+        auto d=SphericalRaster::pixelDirection(x,y,result.width(),result.height());
+        result.setPixelColor(x,y,QColor::fromRgba(SphericalRaster::sampleDirection(original,rotation.rotatedVector(d))));
+    }
+    QMessageBox dialog(QMessageBox::Question,tr("Горизонт"),tr("Проверьте результат на сфере."),QMessageBox::NoButton,this);
+    auto *toggle=dialog.addButton(tr("До / После"),QMessageBox::ActionRole);
+    auto *apply=dialog.addButton(tr("Применить"),QMessageBox::AcceptRole);
+    dialog.addButton(tr("Отмена"),QMessageBox::RejectRole);
+    bool after=true;
+    composite_=result;fullTextureDirty_=true;update();
+    connect(toggle,&QPushButton::clicked,&dialog,[&]{after=!after;composite_=after?result:original;fullTextureDirty_=true;update();});
+    dialog.exec();
+    composite_=original;fullTextureDirty_=true;
+    if(dialog.clickedButton()==apply){
+        pushUndo();editLayer_=result;composite_=result;
+        clearAiSelection();clearDiagnostics();resetMesh();roundCenter_.reset();roundContour_.clear();linePoints_.clear();
+        revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+    }
+    update();
+}
