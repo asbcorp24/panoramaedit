@@ -187,6 +187,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }
         startAiRestoration();
     });
+    auto *poleStretch = new QPushButton(tr("Натяжение текстуры от полюса"), panel);
+    panelLayout->addWidget(poleStretch);
+    connect(poleStretch, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->stretchPoleTexture();});
     auto *manualLevel = new QPushButton(tr("Ручное выравнивание сферы"), panel);
     panelLayout->addWidget(manualLevel);
     connect(manualLevel, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->manualLevelHorizon();});
