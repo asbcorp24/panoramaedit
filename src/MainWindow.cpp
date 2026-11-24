@@ -205,6 +205,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(smartSeam, &QPushButton::clicked, view_, &SphereView::previewSeam);
     connect(seamView, &QPushButton::clicked, view_, &SphereView::showSeam);
     connect(seamAi, &QPushButton::clicked, this, [this]{view_->selectSeamForAi();startAiRestoration();});
+    auto *roundSelection = new QPushButton(tr("Округление по выделению"), panel);
+    panelLayout->addWidget(roundSelection);
+    connect(roundSelection, &QPushButton::clicked, view_, &SphereView::roundFromSelection);
     auto *roundApply = new QPushButton(panel);
     roundApply->setIcon(ToolIcons::make(ToolIcons::Kind::ApplyAi));
     roundApply->setToolTip(tr("Применить округление объекта"));
