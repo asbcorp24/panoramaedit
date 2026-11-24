@@ -258,7 +258,7 @@ bool MainWindow::confirmDiscard() {
 void MainWindow::openFile() {
     if (!confirmDiscard()) return;
     const QString path = QFileDialog::getOpenFileName(this, tr("Открыть панораму"), {},
-        tr("Изображения (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"));
+        tr("Изображения (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff)"));
     if (path.isEmpty()) return;
     QString error;
     if (!view_->openImage(path, &error)) {
