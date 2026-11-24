@@ -172,6 +172,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *diagnostics = new QPushButton(tr("Диагностика панорамы"), panel);
+    panelLayout->addWidget(diagnostics);
+    connect(diagnostics, &QPushButton::clicked, view_, &SphereView::diagnosePanorama);
     auto *smartSeam = new QPushButton(tr("Умный шов"), panel);
     auto *seamView = new QPushButton(tr("Показать шов"), panel);
     auto *seamAi = new QPushButton(tr("ИИ-дорисовка шва"), panel);
