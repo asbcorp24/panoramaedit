@@ -46,6 +46,7 @@ public:
     void showSeam();
     void diagnosePanorama();
     void autoLevelHorizon();
+    void manualLevelHorizon();
     void localColorCorrection();
     void clearDiagnostics();
     void roundObject();
@@ -115,6 +116,8 @@ private:
     GLuint texture_ = 0;
     GLuint maskTexture_ = 0;
     GLsizei indexCount_ = 0;
+    bool levelPreview_=false;
+    QQuaternion levelRotation_;
     bool colorPreview_=false;
     float colorValues_[6]={};
     bool fullTextureDirty_ = true;
