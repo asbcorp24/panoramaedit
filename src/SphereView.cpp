@@ -615,7 +615,7 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
     } else if (dragging_ && (event->buttons() & (Qt::LeftButton | Qt::RightButton))) {
         const QPoint delta = event->pos() - lastMouse_;
         yaw_ += delta.x() * 0.22f;
-        pitch_ = clampf(pitch_ + delta.y() * 0.22f, -89.9f, 89.9f);
+        if (!poleView_) pitch_ = clampf(pitch_ + delta.y() * 0.22f, -89.9f, 89.9f);
         update();
     }
     // Compute after navigation, so the ring remains centered beneath the pointer.
@@ -802,4 +802,52 @@ void SphereView::straightenLine() {
     }
     partialTextureDirty_+=dirty; revision_=nextRevision_++; setModified(revision_!=savedRevision_);
     resetLine(); emit statusMessage(tr("Линия выпрямлена. Ctrl+Z — отменить."));
+}
+
+void SphereView::showPole(int pole) {
+    if (!poleView_) { savedPitch_=pitch_; savedFov_=fov_; }
+    poleView_=pole; pitch_=90.f*float(pole); fov_=90.f;
+    cursorInside_=false; update();
+    emit statusMessage(pole>0?tr("Зенит: сферические инструменты доступны, перетаскивание вращает вид."):tr("Надир: сферические инструменты доступны, перетаскивание вращает вид."));
+}
+void SphereView::showZenith(){showPole(1);}
+void SphereView::showNadir(){showPole(-1);}
+void SphereView::showHorizon(){
+    pitch_=poleView_?savedPitch_:0.f;
+    if(poleView_) fov_=savedFov_;
+    poleView_=0; cursorInside_=false; update();
+}
+void SphereView::repairPole(){
+    if(!poleView_ || !hasImage()){emit statusMessage(tr("Сначала выберите зенит или надир."));return;}
+    if(toolStrength_<=0) return;
+    const QImage source=composite_;
+    const float radius=float(brushRadius_)*rad;
+    const float strength=float(toolStrength_);
+    const int w=source.width(),h=source.height();
+    const int rows=std::min(h,int(std::ceil(radius*h/PI)));
+    if(rows<1)return;
+    pushUndo();
+    // Blend azimuthal neighbours near the singularity; keep the outer cap unchanged.
+    for(int j=0;j<rows;++j){
+        int y=poleView_>0?j:h-1-j;
+        float theta=float(PI)*(j+0.5f)/h;
+        float f=clampf(1-theta/radius,0,1);
+        float weight=strength*f*f*(3-2*f);
+        if(weight<=0)continue;
+        for(int x=0;x<w;++x){
+            float rr=0,gg=0,bb=0;
+            constexpr int taps=16;
+            for(int k=0;k<taps;++k){
+                float shift=(float(k)/(taps-1)-0.5f)*f*w;
+                int sx=(x+int(std::round(shift))+w)%w;
+                auto c=source.pixelColor(sx,y);rr+=c.redF();gg+=c.greenF();bb+=c.blueF();
+            }
+            auto c=source.pixelColor(x,y);
+            auto out=QColor::fromRgbF(c.redF()*(1-weight)+rr/taps*weight,c.greenF()*(1-weight)+gg/taps*weight,c.blueF()*(1-weight)+bb/taps*weight,1);
+            editLayer_.setPixelColor(x,y,out);composite_.setPixelColor(x,y,out);
+        }
+    }
+    partialTextureDirty_+=QRect(0,poleView_>0?0:h-rows,w,rows);
+    revision_=nextRevision_++;setModified(revision_!=savedRevision_);update();
+    emit statusMessage(tr("Полюс сглажен. Ctrl+Z — отменить."));
 }
