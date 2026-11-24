@@ -137,6 +137,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addTool(tr("Округление"), tr("Щёлкните центр и точки по контуру объекта, затем нажмите кнопку применения"), "R", SphereView::Mode::RoundObject, ToolIcons::Kind::Bloat, 3, 0);
     addTool(tr("Сетка"), tr("Выберите центр и перемещайте внутренние узлы"), "M", SphereView::Mode::MeshWarp, ToolIcons::Kind::Push, 4, 0);
     addTool(tr("Выпрямление"), tr("Отметьте точки вдоль искривлённой линии"), "L", SphereView::Mode::Straighten, ToolIcons::Kind::Push, 4, 1);
+    addTool(tr("Умное выделение"), tr("Щелчок по объекту; Shift добавить, Alt исключить"), "K", SphereView::Mode::SmartSelect, ToolIcons::Kind::Sharpen, 4, 2);
     const auto styleActionButton = [buttons](QPushButton *button, ToolIcons::Kind icon,
                                              const QString &name, const QString &hint,
                                              int column) {
