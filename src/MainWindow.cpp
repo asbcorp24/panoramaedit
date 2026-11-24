@@ -172,6 +172,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *smartSeam = new QPushButton(tr("Умный шов"), panel);
+    auto *seamView = new QPushButton(tr("Показать шов"), panel);
+    auto *seamAi = new QPushButton(tr("ИИ-дорисовка шва"), panel);
+    panelLayout->addWidget(smartSeam);
+    panelLayout->addWidget(seamView);
+    panelLayout->addWidget(seamAi);
+    connect(smartSeam, &QPushButton::clicked, view_, &SphereView::smartSeam);
+    connect(seamView, &QPushButton::clicked, view_, &SphereView::showSeam);
+    connect(seamAi, &QPushButton::clicked, this, [this]{view_->selectSeamForAi();startAiRestoration();});
     auto *roundApply = new QPushButton(panel);
     roundApply->setIcon(ToolIcons::make(ToolIcons::Kind::ApplyAi));
     roundApply->setToolTip(tr("Применить округление объекта"));
