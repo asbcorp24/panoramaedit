@@ -1,6 +1,7 @@
 #include "SphereView.h"
 #include "SphericalLiquify.h"
 #include <QMouseEvent>
+#include <QImageReader>
 #include <QEnterEvent>
 #include <QWheelEvent>
 #include <QOpenGLContext>
@@ -57,9 +58,11 @@ void SphereView::setModified(bool modified) {
     emit modifiedChanged(modified);
 }
 bool SphereView::openImage(const QString &path, QString *error) {
-    QImage loaded(path);
+    QImageReader reader(path);
+    reader.setDecideFormatFromContent(true);
+    QImage loaded = reader.read();
     if (loaded.isNull()) {
-        if (error) *error = tr("Не удалось прочитать изображение: %1").arg(path);
+        if (error) *error = tr("Не удалось прочитать изображение: %1\nПричина: %2\nПоддерживаемые форматы: %3").arg(path, reader.errorString(), QString::fromLatin1(QImageReader::supportedImageFormats().join(", ")));
         return false;
     }
     // Some panorama exporters round the width/height or retain a few extra
