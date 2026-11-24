@@ -15,7 +15,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: 'qtshadertools'
+          modules: 'qtshadertools qtimageformats'
       - name: Configure
         shell: pwsh
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
@@ -35,6 +35,11 @@ jobs:
         run: |
           cmake --install build --config Release --prefix package
           windeployqt --release --compiler-runtime package/PanoramaEdit.exe
+          $webp = Join-Path (qmake -query QT_INSTALL_PLUGINS) 'imageformats/qwebp.dll'
+          if (!(Test-Path $webp)) { throw 'Qt WebP decoder not installed' }
+          New-Item -ItemType Directory -Force package/imageformats | Out-Null
+          Copy-Item $webp package/imageformats/qwebp.dll -Force
+          if (!(Test-Path 'package/imageformats/qwebp.dll')) { throw 'Missing WebP decoder in package' }
           Copy-Item ai/setup_ai_windows.bat package/setup_ai_windows.bat
           foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
             if (!(Test-Path "package/$dll")) { throw "Missing native AI DLL: $dll" }
