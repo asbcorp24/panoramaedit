@@ -1,3 +1,8 @@
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QSlider>
+#include <QCheckBox>
 #include <QInputDialog>
 #include <QStringList>
 #include <QPushButton>
@@ -1140,6 +1145,73 @@ void SphereView::autoLevelHorizon(){
         pushUndo();editLayer_=result;composite_=result;
         clearAiSelection();clearDiagnostics();resetMesh();roundCenter_.reset();roundContour_.clear();linePoints_.clear();
         revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+    }
+    update();
+}
+
+void SphereView::localColorCorrection(){
+    if(!hasImage()||!hasAiSelection_||aiMask_.isNull()){
+        QMessageBox::information(this,tr("Цветокоррекция"),tr("Сначала выделите объект умным выделением или кистью ИИ."));return;
+    }
+    const QImage original=composite_, mask=aiMask_;
+    const bool showMask=hasAiSelection_;
+    ++selectionRequest_;
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Локальная цветокоррекция"));
+    auto *layout=new QFormLayout(&dialog);
+    QSlider *sliders[6];
+    const QString names[]={tr("Яркость"),tr("Контраст"),tr("Насыщенность"),tr("Температура"),tr("Тени"),tr("Света")};
+    for(int i=0;i<6;++i){
+        sliders[i]=new QSlider(Qt::Horizontal,&dialog);
+        sliders[i]->setRange(-100,100);sliders[i]->setValue(0);
+        layout->addRow(names[i],sliders[i]);
+    }
+    auto *before=new QCheckBox(tr("Показать оригинал"),&dialog);
+    layout->addRow(before);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);
+    layout->addRow(buttons);
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    QImage corrected=original;
+    auto render=[&]{
+        corrected=original;
+        float v[6];for(int i=0;i<6;++i)v[i]=sliders[i]->value()/100.f;
+        for(int y=0;y<original.height();++y){
+            const auto *m=mask.constScanLine(y);
+            for(int x=0;x<original.width();++x){
+                if(!m[x])continue;
+                auto c=original.pixelColor(x,y);
+                float rgb[]={float(c.redF()),float(c.greenF()),float(c.blueF())};
+                float lum=0.2126f*rgb[0]+0.7152f*rgb[1]+0.0722f*rgb[2];
+                float tone=v[0]*0.25f+v[4]*0.35f*(1-lum)*(1-lum)+v[5]*0.35f*lum*lum;
+                float weight=m[x]/255.f;
+                for(int k=0;k<3;++k){
+                    float z=(rgb[k]-lum)*(1+v[2])+lum;
+                    z=(z-0.5f)*(1+v[1])+0.5f+tone;
+                    z+=v[3]*0.12f*(k==0?1.f:k==2?-1.f:0.f);
+                    rgb[k]+=weight*(std::clamp(z,0.f,1.f)-rgb[k]);
+                }
+                corrected.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
+            }
+        }
+        composite_=before->isChecked()?original:corrected;fullTextureDirty_=true;update();
+    };
+    for(auto *slider:sliders)connect(slider,&QSlider::valueChanged,&dialog,[&](int){render();});
+    connect(before,&QCheckBox::toggled,&dialog,[&](bool checked){composite_=checked?original:corrected;fullTextureDirty_=true;update();});
+    hasAiSelection_=false;update();
+    int decision=dialog.exec();
+    composite_=original;hasAiSelection_=showMask;fullTextureDirty_=true;
+    if(decision==QDialog::Accepted && corrected!=original){
+        pushUndo();
+        for(int y=0;y<original.height();++y){
+            const auto *m=mask.constScanLine(y);
+            for(int x=0;x<original.width();++x)if(m[x]){
+                auto c=corrected.pixelColor(x,y);
+                if(c!=original.pixelColor(x,y))editLayer_.setPixelColor(x,y,c);
+            }
+        }
+        composite_=corrected;revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+        clearAiSelection();
     }
     update();
 }
