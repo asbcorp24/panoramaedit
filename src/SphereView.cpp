@@ -1236,3 +1236,61 @@ void SphereView::localColorCorrection(){
     }
     update();
 }
+
+void SphereView::roundFromSelection(){
+    if(!hasImage()||!hasAiSelection_||aiMask_.isNull()){
+        emit statusMessage(tr("Сначала выделите объект кистью или MobileSAM."));return;
+    }
+    bool ok=false;
+    const QStringList options={QStringLiteral("8"),QStringLiteral("16"),QStringLiteral("32"),QStringLiteral("64"),QStringLiteral("128")};
+    int n=QInputDialog::getItem(this,tr("Округление по выделению"),tr("Количество точек контура:"),options,2,false,&ok).toInt();
+    if(!ok||n<8)return;
+    const QImage mask=aiMask_.scaled(2048,1024,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).convertToFormat(QImage::Format_Grayscale8);
+    const int w=mask.width(),h=mask.height();
+    QVector3D sum;double weight=0;
+    for(int y=0;y<h;++y){
+        float area=std::sin(PI*(y+0.5f)/h);
+        const auto *row=mask.constScanLine(y);
+        for(int x=0;x<w;++x)if(row[x]>127){
+            sum+=SphericalRaster::pixelDirection(x,y,w,h)*area;weight+=area;
+        }
+    }
+    if(weight<1||sum.length()/weight<0.65){
+        emit statusMessage(tr("Выделение пустое или слишком большое для округления."));return;
+    }
+    const QVector3D c=sum.normalized();
+    const QVector3D u=QVector3D::crossProduct(std::abs(c.y())<0.9f?QVector3D(0,1,0):QVector3D(1,0,0),c).normalized();
+    const QVector3D v=QVector3D::crossProduct(c,u).normalized();
+    std::vector<double> radii(n,0.0);
+    for(int y=0;y<h;++y){
+        const auto *row=mask.constScanLine(y);
+        for(int x=0;x<w;++x)if(row[x]>127){
+            if(row[(x+w-1)%w]>127 && row[(x+1)%w]>127 &&
+                mask.constScanLine(std::max(0,y-1))[x]>127 &&
+                mask.constScanLine(std::min(h-1,y+1))[x]>127)continue;
+            auto d=SphericalRaster::pixelDirection(x,y,w,h);
+            double r=std::acos(clampf(QVector3D::dotProduct(c,d),-1,1));
+            if(r>PI/3){emit statusMessage(tr("Объект слишком велик для радиального округления."));return;}
+            double a=std::atan2(QVector3D::dotProduct(d,v),QVector3D::dotProduct(d,u));
+            int k=(int(std::lround(a*n/(2*PI)))%n+n)%n;
+            radii[k]=std::max(radii[k],r);
+        }
+    }
+    int populated=0;for(double r:radii)if(r>0.001)++populated;
+    if(populated<n/2){emit statusMessage(tr("Недостаточно точек контура. Выберите меньше точек или уточните маску."));return;}
+    const auto raw=radii;
+    for(int k=0;k<n;++k)if(radii[k]<=0.001){
+        int l=1,r=1;while(raw[(k+n-l)%n]<=0.001)++l;while(raw[(k+r)%n]<=0.001)++r;
+        radii[k]=(raw[(k+n-l)%n]*r+raw[(k+r)%n]*l)/(l+r);
+    }
+    const auto filled=radii;
+    setMode(Mode::RoundObject);
+    roundCenter_=c;
+    for(int k=0;k<n;++k){
+        double a=k*2*PI/n;
+        double r=(filled[(k+n-1)%n]+2*filled[k]+filled[(k+1)%n])/4;
+        roundContour_.append((c*float(std::cos(r))+(u*float(std::cos(a))+v*float(std::sin(a)))*float(std::sin(r))).normalized());
+    }
+    clearAiSelection();update();
+    emit statusMessage(tr("Центр и %1 точек готовы. Настройте силу и нажмите «Применить округление».").arg(n));
+}
