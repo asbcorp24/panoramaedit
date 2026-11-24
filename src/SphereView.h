@@ -40,6 +40,9 @@ public:
     bool applyAiResult(const SphericalAI::Patch &patch, const QImage &result);
     void clearAiSelection();
     void smoothSeam();
+    void smartSeam();
+    void selectSeamForAi();
+    void showSeam();
     void roundObject();
     void applyMesh();
     void resetMesh();
