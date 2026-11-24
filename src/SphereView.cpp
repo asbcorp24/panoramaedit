@@ -241,6 +241,8 @@ uniform sampler2D uPanorama;
 uniform sampler2D uMask;
 uniform bool uShowMask;
 uniform bool uColorPreview;
+uniform bool uLevelPreview;
+uniform vec4 uLevelRotation;
 uniform float uColorValues[6];
 uniform bool uMesh;
 uniform vec3 uMeshC, uMeshU, uMeshV;
@@ -266,6 +268,7 @@ const float PI = 3.14159265358979323846;
 void main() {
     vec3 d = normalize(vDirection);
     vec3 sampleD = meshDirection(d);
+    if(uLevelPreview){vec3 q=uLevelRotation.xyz;sampleD=normalize(sampleD+2.0*cross(q,cross(q,sampleD)+uLevelRotation.w*sampleD));}
     float u = 0.5 + atan(sampleD.x, -sampleD.z) / (2.0 * PI);
     // OpenGL treats the first row of QImage as the bottom texture row (v=0).
     float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
@@ -428,6 +431,8 @@ void SphereView::paintGL() {
     }
     shader_->setUniformValue("uMask", 1);
     shader_->setUniformValue("uColorPreview",colorPreview_);
+    shader_->setUniformValue("uLevelPreview",levelPreview_);
+    shader_->setUniformValue("uLevelRotation",QVector4D(levelRotation_.x(),levelRotation_.y(),levelRotation_.z(),levelRotation_.scalar()));
     shader_->setUniformValueArray("uColorValues",colorValues_,6,1);
     shader_->setUniformValue("uShowMask", hasAiSelection_ && !aiMask_.isNull());
     shader_->setUniformValue("uShowCursor", cursorInside_ && mode_ != Mode::Navigate &&
@@ -445,6 +450,7 @@ void SphereView::paintGL() {
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
     vertexArray_.release();
     shader_->release();
+    if(levelPreview_){QPainter p(this);p.setPen(QPen(Qt::yellow,1,Qt::DashLine));p.drawLine(0,height()/2,width(),height()/2);}
     if (diagnosticDocument_==documentId_ && diagnosticRevision_==revision_ && !diagnosticMarks_.isEmpty()) {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
@@ -1293,4 +1299,53 @@ void SphereView::roundFromSelection(){
     }
     clearAiSelection();update();
     emit statusMessage(tr("Центр и %1 точек готовы. Настройте силу и нажмите «Применить округление».").arg(n));
+}
+
+void SphereView::manualLevelHorizon(){
+    if(!hasImage()||levelPreview_)return;
+    setMode(Mode::Navigate);showHorizon();
+    const QImage original=composite_;
+    const quint64 doc=documentId_,rev=revision_;
+    const bool maskVisible=hasAiSelection_;hasAiSelection_=false;
+    ++selectionRequest_;
+    auto *dialog=new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Ручное выравнивание сферы"));
+    auto *layout=new QFormLayout(dialog);
+    QSlider *sliders[3];
+    const QString labels[]={tr("Наклон X"),tr("Поворот Y"),tr("Крен Z")};
+    for(int i=0;i<3;++i){
+        sliders[i]=new QSlider(Qt::Horizontal,dialog);sliders[i]->setRange(-1800,1800);
+        sliders[i]->setValue(0);layout->addRow(labels[i],sliders[i]);
+    }
+    auto *reset=new QPushButton(tr("Сбросить"),dialog);layout->addRow(reset);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog);layout->addRow(buttons);
+    levelRotation_=QQuaternion();levelPreview_=true;update();
+    auto refresh=[this,x=sliders[0],y=sliders[1],z=sliders[2]]{
+        levelRotation_=QQuaternion::fromEulerAngles(x->value()/10.f,y->value()/10.f,z->value()/10.f);update();
+    };
+    for(auto *slider:sliders)connect(slider,&QSlider::valueChanged,dialog,[refresh](int){refresh();});
+    connect(reset,&QPushButton::clicked,dialog,[x=sliders[0],y=sliders[1],z=sliders[2]]{x->setValue(0);y->setValue(0);z->setValue(0);});
+    connect(buttons,&QDialogButtonBox::accepted,dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,dialog,&QDialog::reject);
+    connect(dialog,&QDialog::finished,this,[=,this](int decision){
+        auto rotation=levelRotation_;levelPreview_=false;
+        if(doc!=documentId_||rev!=revision_){update();return;}
+        hasAiSelection_=maskVisible;
+        if(decision==QDialog::Accepted && !rotation.isIdentity()){
+            QImage result(original.size(),QImage::Format_RGBA8888);
+            if(!result.isNull()){
+                for(int y=0;y<result.height();++y)for(int x=0;x<result.width();++x){
+                    auto d=SphericalRaster::pixelDirection(x,y,result.width(),result.height());
+                    result.setPixelColor(x,y,QColor::fromRgba(SphericalRaster::sampleDirection(original,rotation.rotatedVector(d))));
+                }
+                pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;
+                revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+                clearAiSelection();clearDiagnostics();
+                emit statusMessage(tr("Ориентация сферы применена. Сохраните панораму."));
+            }
+        }
+        update();
+    });
+    dialog->show();
 }
