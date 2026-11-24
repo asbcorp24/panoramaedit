@@ -55,6 +55,7 @@ public:
     void showNadir();
     void showHorizon();
     void repairPole();
+    bool prepareObjectRemoval();
     void smartSelect(const QVector3D &center, int operation);
     quint64 selectionRequest_=0;
     bool isModified() const { return modified_; }
