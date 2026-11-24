@@ -174,6 +174,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     auto *diagnostics = new QPushButton(tr("Диагностика панорамы"), panel);
     panelLayout->addWidget(diagnostics);
+    auto *clearDiagnostics = new QPushButton(tr("Скрыть дефекты"), panel);
+    panelLayout->addWidget(clearDiagnostics);
+    connect(clearDiagnostics, &QPushButton::clicked, view_, &SphereView::clearDiagnostics);
     connect(diagnostics, &QPushButton::clicked, view_, &SphereView::diagnosePanorama);
     auto *smartSeam = new QPushButton(tr("Умный шов"), panel);
     auto *seamView = new QPushButton(tr("Показать шов"), panel);
