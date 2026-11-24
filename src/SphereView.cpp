@@ -240,6 +240,8 @@ out vec4 fragColor;
 uniform sampler2D uPanorama;
 uniform sampler2D uMask;
 uniform bool uShowMask;
+uniform bool uColorPreview;
+uniform float uColorValues[6];
 uniform bool uMesh;
 uniform vec3 uMeshC, uMeshU, uMeshV;
 uniform float uMeshExtent, uMeshStrength;
@@ -268,6 +270,15 @@ void main() {
     // OpenGL treats the first row of QImage as the bottom texture row (v=0).
     float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
     fragColor = texture(uPanorama, vec2(u, v));
+    if (uColorPreview) {
+        vec3 rgb=fragColor.rgb;
+        float lum=dot(rgb,vec3(0.2126,0.7152,0.0722));
+        float tone=uColorValues[0]*0.25+uColorValues[4]*0.35*(1.0-lum)*(1.0-lum)+uColorValues[5]*0.35*lum*lum;
+        vec3 z=(rgb-lum)*(1.0+uColorValues[2])+lum;
+        z=(z-0.5)*(1.0+uColorValues[1])+0.5+tone;
+        z+=uColorValues[3]*0.12*vec3(1,0,-1);
+        fragColor.rgb=mix(rgb,clamp(z,0.0,1.0),texture(uMask,vec2(u,v)).r);
+    }
     if (uShowMask) {
         float selected = texture(uMask, vec2(u, v)).r;
         fragColor.rgb = mix(fragColor.rgb, vec3(0.12, 0.65, 1.0), selected * 0.45);
@@ -416,6 +427,8 @@ void SphereView::paintGL() {
         shader_->setUniformValueArray("uMeshOffsets", meshOffsets_.constData(), 16);
     }
     shader_->setUniformValue("uMask", 1);
+    shader_->setUniformValue("uColorPreview",colorPreview_);
+    shader_->setUniformValueArray("uColorValues",colorValues_,6,1);
     shader_->setUniformValue("uShowMask", hasAiSelection_ && !aiMask_.isNull());
     shader_->setUniformValue("uShowCursor", cursorInside_ && mode_ != Mode::Navigate &&
                                            !dragging_ && !composite_.isNull());
@@ -1196,10 +1209,18 @@ void SphereView::localColorCorrection(){
         }
         composite_=before->isChecked()?original:corrected;fullTextureDirty_=true;update();
     };
-    for(auto *slider:sliders)connect(slider,&QSlider::valueChanged,&dialog,[&](int){render();});
-    connect(before,&QCheckBox::toggled,&dialog,[&](bool checked){composite_=checked?original:corrected;fullTextureDirty_=true;update();});
+    const bool gpuPreview=isValid() && shader_ && shader_->isLinked();
+    auto preview=[&]{
+        if(!gpuPreview){render();return;}
+        for(int i=0;i<6;++i)colorValues_[i]=sliders[i]->value()/100.f;
+        colorPreview_=!before->isChecked();update();
+    };
+    for(auto *slider:sliders)connect(slider,&QSlider::valueChanged,&dialog,[&](int){preview();});
+    connect(before,&QCheckBox::toggled,&dialog,[&](bool){preview();});
     hasAiSelection_=false;update();
     int decision=dialog.exec();
+    colorPreview_=false;
+    if(gpuPreview && decision==QDialog::Accepted)render();
     composite_=original;hasAiSelection_=showMask;fullTextureDirty_=true;
     if(decision==QDialog::Accepted && corrected!=original){
         pushUndo();
