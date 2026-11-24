@@ -45,6 +45,7 @@ public:
     void selectSeamForAi();
     void showSeam();
     void diagnosePanorama();
+    void autoLevelHorizon();
     void clearDiagnostics();
     void roundObject();
     void applyMesh();
