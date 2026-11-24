@@ -114,6 +114,8 @@ private:
     GLuint texture_ = 0;
     GLuint maskTexture_ = 0;
     GLsizei indexCount_ = 0;
+    bool colorPreview_=false;
+    float colorValues_[6]={};
     bool fullTextureDirty_ = true;
     QRegion partialTextureDirty_;
     Mode mode_ = Mode::Navigate;
