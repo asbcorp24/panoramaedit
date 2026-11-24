@@ -2,6 +2,8 @@
 #include "SphericalLiquify.h"
 #include <QMouseEvent>
 #include <QImageReader>
+#include <QFile>
+#include <webp/decode.h>
 #include <QEnterEvent>
 #include <QWheelEvent>
 #include <QOpenGLContext>
@@ -61,6 +63,21 @@ bool SphereView::openImage(const QString &path, QString *error) {
     QImageReader reader(path);
     reader.setDecideFormatFromContent(true);
     QImage loaded = reader.read();
+    if (loaded.isNull()) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly) && file.size() <= 512LL * 1024 * 1024) {
+            const QByteArray bytes = file.readAll();
+            const auto *data = reinterpret_cast<const uint8_t *>(bytes.constData());
+            int w = 0, h = 0;
+            if (WebPGetInfo(data, size_t(bytes.size()), &w, &h) &&
+                w > 0 && h > 0 && qint64(w) * h <= 134217728) {
+                QImage decoded(w, h, QImage::Format_RGBA8888);
+                if (!decoded.isNull() && WebPDecodeRGBAInto(data, size_t(bytes.size()),
+                    decoded.bits(), size_t(decoded.sizeInBytes()), decoded.bytesPerLine()))
+                    loaded = decoded;
+            }
+        }
+    }
     if (loaded.isNull()) {
         if (error) *error = tr("Не удалось прочитать изображение: %1\nПричина: %2\nПоддерживаемые форматы: %3").arg(path, reader.errorString(), QString::fromLatin1(QImageReader::supportedImageFormats().join(", ")));
         return false;
