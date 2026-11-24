@@ -172,6 +172,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *localColor = new QPushButton(tr("Локальная цветокоррекция"), panel);
+    panelLayout->addWidget(localColor);
+    connect(localColor, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->localColorCorrection();});
     auto *objectSelect = new QPushButton(tr("Выбрать объект (ИИ)"), panel);
     auto *objectRemove = new QPushButton(tr("Удалить выбранный объект"), panel);
     panelLayout->addWidget(objectSelect);
