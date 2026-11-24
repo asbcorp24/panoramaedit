@@ -172,6 +172,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *objectSelect = new QPushButton(tr("Выбрать объект (ИИ)"), panel);
+    auto *objectRemove = new QPushButton(tr("Удалить выбранный объект"), panel);
+    panelLayout->addWidget(objectSelect);
+    panelLayout->addWidget(objectRemove);
+    connect(objectSelect, &QPushButton::clicked, this, [this]{view_->clearAiSelection();view_->setMode(SphereView::Mode::SmartSelect);});
+    connect(objectRemove, &QPushButton::clicked, this, [this]{
+        if(aiWatcher_)return;
+        if(!view_->prepareObjectRemoval()){
+            QMessageBox::information(this,tr("Удаление объекта"),tr("Сначала выберите объект и дождитесь появления маски."));return;
+        }
+        startAiRestoration();
+    });
     auto *diagnostics = new QPushButton(tr("Диагностика панорамы"), panel);
     panelLayout->addWidget(diagnostics);
     auto *clearDiagnostics = new QPushButton(tr("Скрыть дефекты"), panel);
