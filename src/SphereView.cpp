@@ -40,7 +40,9 @@ SphereView::~SphereView() {
     }
 }
 void SphereView::setMode(Mode mode) {
+    resetMesh();
     mode_ = mode;
+    if (mode == Mode::MeshWarp) emit statusMessage(tr("Сетка: выберите центр, перетаскивайте внутренние узлы, затем примените."));
     roundCenter_.reset(); roundContour_.clear();
     if (mode == Mode::RoundObject) emit statusMessage(tr("Округление: щёлкните центр, затем точки контура; Enter — применить."));
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
@@ -94,6 +96,7 @@ bool SphereView::openImage(const QString &path, QString *error) {
         return false;
     }
     roundCenter_.reset(); roundContour_.clear();
+    resetMesh();
     baseImage_ = loaded.convertToFormat(QImage::Format_RGBA8888);
     editLayer_ = QImage(baseImage_.size(), QImage::Format_RGBA8888);
     editLayer_.fill(Qt::transparent);
@@ -217,6 +220,22 @@ out vec4 fragColor;
 uniform sampler2D uPanorama;
 uniform sampler2D uMask;
 uniform bool uShowMask;
+uniform bool uMesh;
+uniform vec3 uMeshC, uMeshU, uMeshV;
+uniform float uMeshExtent, uMeshStrength;
+uniform vec2 uMeshOffsets[16];
+vec3 meshDirection(vec3 d) {
+    float z = dot(d,uMeshC);
+    if (!uMesh || z <= 0.0) return d;
+    vec2 p = vec2(dot(d,uMeshU),dot(d,uMeshV))/z/uMeshExtent;
+    if (any(greaterThanEqual(abs(p),vec2(1.0)))) return d;
+    vec2 g = (p+1.0)*1.5;
+    ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
+    int k = i.y*4+i.x;
+    vec2 off = mix(mix(uMeshOffsets[k],uMeshOffsets[k+1],f.x),mix(uMeshOffsets[k+4],uMeshOffsets[k+5],f.x),f.y);
+    p += off*uMeshStrength;
+    return normalize(uMeshC+uMeshExtent*(p.x*uMeshU+p.y*uMeshV));
+}
 uniform bool uShowCursor;
 uniform vec3 uCursorDirection;
 uniform float uCursorRadius;
@@ -224,9 +243,10 @@ uniform float uCursorPixelAngle;
 const float PI = 3.14159265358979323846;
 void main() {
     vec3 d = normalize(vDirection);
-    float u = 0.5 + atan(d.x, -d.z) / (2.0 * PI);
+    vec3 sampleD = meshDirection(d);
+    float u = 0.5 + atan(sampleD.x, -sampleD.z) / (2.0 * PI);
     // OpenGL treats the first row of QImage as the bottom texture row (v=0).
-    float v = 0.5 - asin(clamp(d.y, -1.0, 1.0)) / PI;
+    float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
     fragColor = texture(uPanorama, vec2(u, v));
     if (uShowMask) {
         float selected = texture(uMask, vec2(u, v)).r;
@@ -366,6 +386,15 @@ void SphereView::paintGL() {
     shader_->bind();
     shader_->setUniformValue("uMVP", projection * view);
     shader_->setUniformValue("uPanorama", 0);
+    shader_->setUniformValue("uMesh", mode_ == Mode::MeshWarp && meshCenter_.has_value());
+    if (meshCenter_) {
+        shader_->setUniformValue("uMeshC", *meshCenter_);
+        shader_->setUniformValue("uMeshU", meshU_);
+        shader_->setUniformValue("uMeshV", meshV_);
+        shader_->setUniformValue("uMeshExtent", meshExtent_);
+        shader_->setUniformValue("uMeshStrength", float(toolStrength_));
+        shader_->setUniformValueArray("uMeshOffsets", meshOffsets_.constData(), 16);
+    }
     shader_->setUniformValue("uMask", 1);
     shader_->setUniformValue("uShowMask", hasAiSelection_ && !aiMask_.isNull());
     shader_->setUniformValue("uShowCursor", cursorInside_ && mode_ != Mode::Navigate &&
@@ -383,6 +412,21 @@ void SphereView::paintGL() {
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
     vertexArray_.release();
     shader_->release();
+    if (mode_ == Mode::MeshWarp && meshCenter_) {
+        QPainter painter(this); painter.setPen(QPen(Qt::cyan, 1));
+        QPointF pts[16]; bool visible[16];
+        for(int i=0;i<16;++i) {
+            QVector2D p(-1.f+2.f*(i%4)/3.f,-1.f+2.f*(i/4)/3.f);
+            p -= meshOffsets_[i]*float(toolStrength_);
+            QVector4D q=projection*view*QVector4D((*meshCenter_+meshExtent_*(p.x()*meshU_+p.y()*meshV_)).normalized(),1);
+            visible[i]=q.w()>0; if(visible[i]) pts[i]=QPointF((q.x()/q.w()+1)*width()/2,(1-q.y()/q.w())*height()/2);
+        }
+        for(int i=0;i<16;++i) if(visible[i]) {
+            if(i%4<3 && visible[i+1]) painter.drawLine(pts[i],pts[i+1]);
+            if(i/4<3 && visible[i+4]) painter.drawLine(pts[i],pts[i+4]);
+            if(i%4>0 && i%4<3 && i/4>0 && i/4<3) painter.drawEllipse(pts[i],5,5);
+        }
+    }
     if (mode_ == Mode::RoundObject && roundCenter_) {
         QPainter painter(this);
         painter.setPen(QPen(Qt::cyan, 2));
@@ -478,6 +522,27 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if (mode_ == Mode::MeshWarp && event->button()==Qt::LeftButton && hasImage()) {
+        if (!meshCenter_) {
+            meshCenter_=cursorDirection_;
+            meshU_=QVector3D::crossProduct(std::abs(cursorDirection_.y())<0.9f?QVector3D(0,1,0):QVector3D(1,0,0),cursorDirection_).normalized();
+            meshV_=QVector3D::crossProduct(cursorDirection_,meshU_).normalized();
+            meshExtent_=std::tan(float(brushRadius_)*rad);
+            meshOffsets_.fill(QVector2D(),16);
+        } else {
+            float z=QVector3D::dotProduct(cursorDirection_,*meshCenter_);
+            if(z>0) {
+                QVector2D p(QVector3D::dotProduct(cursorDirection_,meshU_)/z/meshExtent_,QVector3D::dotProduct(cursorDirection_,meshV_)/z/meshExtent_);
+                float best=0.25f;
+                for(int i: {5,6,9,10}) {
+                    QVector2D node(-1.f+2.f*(i%4)/3.f,-1.f+2.f*(i/4)/3.f);
+                    float dist=(p-node+meshOffsets_[i]*float(toolStrength_)).length();
+                    if(dist<best){best=dist;meshDrag_=i;}
+                }
+            }
+        }
+        update(); event->accept(); return;
+    }
     if (mode_ == Mode::RoundObject && event->button() == Qt::LeftButton && hasImage()) {
         if (!roundCenter_) roundCenter_ = cursorDirection_;
         else roundContour_.append(cursorDirection_);
@@ -509,7 +574,15 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
 }
 void SphereView::mouseMoveEvent(QMouseEvent *event) {
     cursorInside_ = rect().contains(event->pos());
-    if (painting_ && (event->buttons() & Qt::LeftButton)) {
+    if (mode_==Mode::MeshWarp && meshCenter_ && meshDrag_>=0 && (event->buttons() & Qt::LeftButton)) {
+        auto d=directionFromScreen(event->position()); float z=QVector3D::dotProduct(d,*meshCenter_);
+        if(z>0) {
+            QVector2D p(QVector3D::dotProduct(d,meshU_)/z/meshExtent_,QVector3D::dotProduct(d,meshV_)/z/meshExtent_);
+            QVector2D node(-1.f+2.f*(meshDrag_%4)/3.f,-1.f+2.f*(meshDrag_/4)/3.f);
+            auto off=(node-p)/float(std::max(0.01,toolStrength_));
+            meshOffsets_[meshDrag_]=QVector2D(clampf(off.x(),-0.15f,0.15f),clampf(off.y(),-0.15f,0.15f));
+        }
+    } else if (painting_ && (event->buttons() & Qt::LeftButton)) {
         const auto next = directionFromScreen(event->position());
         if (lastStroke_) strokeBetween(*lastStroke_, next);
         else paintAt(next);
@@ -528,6 +601,7 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
 }
 void SphereView::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
+        meshDrag_ = -1;
         painting_ = false;
         lastStroke_.reset();
         cloneSnapshot_ = {};
@@ -613,4 +687,39 @@ void SphereView::roundObject() {
     partialTextureDirty_+=dirty; revision_=nextRevision_++; setModified(revision_!=savedRevision_);
     roundCenter_.reset();roundContour_.clear();update();
     emit statusMessage(tr("Округление применено. Ctrl+Z — отменить."));
+}
+
+void SphereView::resetMesh() {
+    meshCenter_.reset(); meshOffsets_.clear(); meshDrag_=-1; update();
+}
+void SphereView::applyMesh() {
+    if (!meshCenter_ || meshOffsets_.size()!=16 || mode_!=Mode::MeshWarp) return;
+    bool changed=false; for(const auto &o:meshOffsets_) if(!o.isNull()) changed=true;
+    if(!changed){resetMesh();return;}
+    const QImage source=composite_;
+    pushUndo();
+    QRegion dirty;
+    for(int y=0;y<source.height();++y) {
+        int start=-1;
+        for(int x=0;x<source.width();++x) {
+            auto d=SphericalRaster::pixelDirection(x,y,source.width(),source.height());
+            float z=QVector3D::dotProduct(d,*meshCenter_);
+            float px=QVector3D::dotProduct(d,meshU_)/std::max(z,1e-8f)/meshExtent_;
+            float py=QVector3D::dotProduct(d,meshV_)/std::max(z,1e-8f)/meshExtent_;
+            if(z<=0 || std::abs(px)>=1 || std::abs(py)>=1) {
+                if(start>=0){dirty+=QRect(start,y,x-start,1);start=-1;} continue;
+            }
+            float gx=(px+1)*1.5f,gy=(py+1)*1.5f;
+            int ix=std::min(2,int(gx)),iy=std::min(2,int(gy)),k=iy*4+ix;
+            float fx=gx-ix,fy=gy-iy;
+            auto off=((meshOffsets_[k]*(1-fx)+meshOffsets_[k+1]*fx)*(1-fy)+(meshOffsets_[k+4]*(1-fx)+meshOffsets_[k+5]*fx)*fy)*float(toolStrength_);
+            auto sample=(*meshCenter_+meshExtent_*((px+off.x())*meshU_+(py+off.y())*meshV_)).normalized();
+            auto color=QColor::fromRgb(SphericalRaster::sampleDirection(source,sample));
+            editLayer_.setPixelColor(x,y,color); composite_.setPixelColor(x,y,color);
+            if(start<0)start=x;
+        }
+        if(start>=0)dirty+=QRect(start,y,source.width()-start,1);
+    }
+    partialTextureDirty_+=dirty; revision_=nextRevision_++;setModified(revision_!=savedRevision_);resetMesh();
+    emit statusMessage(tr("Деформация сетки применена. Ctrl+Z — отменить."));
 }
