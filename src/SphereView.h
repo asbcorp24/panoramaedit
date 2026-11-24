@@ -22,7 +22,7 @@ class SphereView final : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Co
     Q_OBJECT
 public:
     enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch,
-                      AiSharpen, AiInpaint, RoundObject, MeshWarp, Straighten };
+                      AiSharpen, AiInpaint, RoundObject, MeshWarp, Straighten, SmartSelect };
     explicit SphereView(QWidget *parent = nullptr);
     ~SphereView() override;
     bool openImage(const QString &path, QString *error = nullptr);
@@ -49,6 +49,8 @@ public:
     void showNadir();
     void showHorizon();
     void repairPole();
+    void smartSelect(const QVector3D &center, int operation);
+    quint64 selectionRequest_=0;
     bool isModified() const { return modified_; }
 
 signals:
