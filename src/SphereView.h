@@ -117,6 +117,9 @@ private:
     GLuint maskTexture_ = 0;
     GLsizei indexCount_ = 0;
     bool levelPreview_=false;
+    bool levelDragging_=false;
+    QVector3D levelAnchor_;
+    Q_SIGNAL void levelRotationChanged();
     QQuaternion levelRotation_;
     bool colorPreview_=false;
     float colorValues_[6]={};
