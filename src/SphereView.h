@@ -46,6 +46,7 @@ public:
     void showSeam();
     void diagnosePanorama();
     void autoLevelHorizon();
+    void localColorCorrection();
     void clearDiagnostics();
     void roundObject();
     void applyMesh();
