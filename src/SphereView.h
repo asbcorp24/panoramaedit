@@ -45,6 +45,7 @@ public:
     void selectSeamForAi();
     void showSeam();
     void diagnosePanorama();
+    void clearDiagnostics();
     void roundObject();
     void applyMesh();
     void resetMesh();
@@ -92,6 +93,9 @@ private:
     QVector<QVector2D> meshOffsets_;
     int meshDrag_ = -1;
     QVector2D meshStart_;
+    struct DiagnosticMark { QVector3D direction; QColor color; QString label; };
+    QVector<DiagnosticMark> diagnosticMarks_;
+    quint64 diagnosticDocument_=0, diagnosticRevision_=0;
     QImage baseImage_;
     QImage editLayer_;
     QImage composite_;
