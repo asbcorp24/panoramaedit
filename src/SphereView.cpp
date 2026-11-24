@@ -8,6 +8,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <QPainter>
 
 namespace {
 constexpr float PI = 3.14159265358979323846f;
@@ -37,6 +38,8 @@ SphereView::~SphereView() {
 }
 void SphereView::setMode(Mode mode) {
     mode_ = mode;
+    roundCenter_.reset(); roundContour_.clear();
+    if (mode == Mode::RoundObject) emit statusMessage(tr("Округление: щёлкните центр, затем точки контура; Enter — применить."));
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
     update(); // Refresh the angular brush outline on tool switches.
     if (mode == Mode::CloneStamp)
@@ -70,6 +73,7 @@ bool SphereView::openImage(const QString &path, QString *error) {
             .arg(loaded.width()).arg(loaded.height());
         return false;
     }
+    roundCenter_.reset(); roundContour_.clear();
     baseImage_ = loaded.convertToFormat(QImage::Format_RGBA8888);
     editLayer_ = QImage(baseImage_.size(), QImage::Format_RGBA8888);
     editLayer_.fill(Qt::transparent);
@@ -359,6 +363,15 @@ void SphereView::paintGL() {
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
     vertexArray_.release();
     shader_->release();
+    if (mode_ == Mode::RoundObject && roundCenter_) {
+        QPainter painter(this);
+        painter.setPen(QPen(Qt::cyan, 2));
+        const auto mark = [&](const QVector3D &d) {
+            const QVector4D p = projection * view * QVector4D(d, 1);
+            if (p.w() > 0) painter.drawEllipse(QPointF((p.x()/p.w()+1)*width()/2, (1-p.y()/p.w())*height()/2), 4, 4);
+        };
+        mark(*roundCenter_); for (const auto &d : roundContour_) mark(d);
+    }
 }
 QVector3D SphereView::directionFromScreen(const QPointF &pos) const {
     // Use the same projection and camera matrices for painting and rendering.
@@ -445,6 +458,11 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if (mode_ == Mode::RoundObject && event->button() == Qt::LeftButton && hasImage()) {
+        if (!roundCenter_) roundCenter_ = cursorDirection_;
+        else roundContour_.append(cursorDirection_);
+        update(); event->accept(); return;
+    }
     if (event->button() == Qt::LeftButton && mode_ == Mode::CloneStamp &&
         (event->modifiers() & Qt::ControlModifier) && hasImage()) {
         cloneSource_ = directionFromScreen(event->position());
@@ -514,4 +532,65 @@ void SphereView::leaveEvent(QEvent *event) {
     cursorInside_ = false;
     update();
     QOpenGLWidget::leaveEvent(event);
+}
+
+void SphereView::roundObject() {
+    if (mode_ != Mode::RoundObject || !roundCenter_ || roundContour_.size() < 4 || !hasImage()) {
+        emit statusMessage(tr("Укажите центр и минимум четыре точки по контуру объекта.")); return;
+    }
+    const QVector3D c = *roundCenter_;
+    const QVector3D axis = std::abs(c.y()) < 0.9f ? QVector3D(0,1,0) : QVector3D(1,0,0);
+    const QVector3D u = QVector3D::crossProduct(axis,c).normalized();
+    const QVector3D v = QVector3D::crossProduct(c,u).normalized();
+    std::vector<std::pair<double,double>> samples;
+    double target = 0, outer = 0;
+    for (const auto &d : roundContour_) {
+        double a = std::atan2(QVector3D::dotProduct(d,v), QVector3D::dotProduct(d,u));
+        double r = std::acos(clampf(QVector3D::dotProduct(c,d),-1,1));
+        if (r < 0.001 || r > PI/3) continue;
+        samples.emplace_back(a,r); target += r; outer = std::max(outer,r);
+    }
+    if (samples.size() < 4) return;
+    std::sort(samples.begin(),samples.end());
+    target /= samples.size();
+    for (size_t i=0;i<samples.size();++i) {
+        double gap = (i+1<samples.size()?samples[i+1].first:samples.front().first+2*PI)-samples[i].first;
+        if (gap > PI/2+0.01) { emit statusMessage(tr("Добавьте точки по всему контуру без больших промежутков.")); return; }
+    }
+    outer = std::min(double(PI)*0.49, outer*1.35);
+    samples.insert(samples.begin(), {samples.back().first-2*PI,samples.back().second});
+    samples.push_back({samples[1].first+2*PI,samples[1].second});
+    const QImage source = composite_;
+    pushUndo();
+    const int w=source.width(), h=source.height();
+    QRegion dirty;
+    for (int y=0;y<h;++y) {
+        double lat=PI*(0.5-(y+0.5)/h);
+        if (std::abs(lat-std::asin(clampf(c.y(),-1,1)))>outer) continue;
+        int start=-1;
+        for (int x=0;x<w;++x) {
+            const auto d=SphericalRaster::pixelDirection(x,y,w,h);
+            double r=std::acos(clampf(QVector3D::dotProduct(c,d),-1,1));
+            if (r>=outer || r<1e-7) {
+                if(start>=0){dirty+=QRect(start,y,x-start,1);start=-1;} continue;
+            }
+            double a=std::atan2(QVector3D::dotProduct(d,v),QVector3D::dotProduct(d,u));
+            auto hi=std::upper_bound(samples.begin(),samples.end(),a,[](double x,const auto &p){return x<p.first;});
+            if(hi==samples.begin()||hi==samples.end()) continue;
+            auto lo=hi-1;
+            double t=(a-lo->first)/std::max(1e-9,hi->first-lo->first);
+            double old=lo->second+(hi->second-lo->second)*t;
+            double desired=old+(target-old)*toolStrength_;
+            double sr=r<=desired?r*old/desired:old+(r-desired)*(outer-old)/(outer-desired);
+            const auto tangent=(d-c*float(std::cos(r))).normalized();
+            auto p=SphericalRaster::sampleDirection(source,c*float(std::cos(sr))+tangent*float(std::sin(sr)));
+            QColor color=QColor::fromRgb(p);
+            editLayer_.setPixelColor(x,y,color); composite_.setPixelColor(x,y,color);
+            if(start<0)start=x;
+        }
+        if(start>=0)dirty+=QRect(start,y,w-start,1);
+    }
+    partialTextureDirty_+=dirty; revision_=nextRevision_++; setModified(revision_!=savedRevision_);
+    roundCenter_.reset();roundContour_.clear();update();
+    emit statusMessage(tr("Округление применено. Ctrl+Z — отменить."));
 }
