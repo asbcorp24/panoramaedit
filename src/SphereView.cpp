@@ -175,6 +175,7 @@ std::optional<SphericalAI::Patch> SphereView::prepareAiPatch() const {
     return SphericalAI::preparePatch(composite_, aiMask_);
 }
 void SphereView::clearAiSelection() {
+    ++selectionRequest_;
     aiMask_ = {};
     aiMaskDirty_ = {};
     fullMaskDirty_ = true;
@@ -1047,3 +1048,31 @@ void SphereView::diagnosePanorama(){
 }
 
 void SphereView::clearDiagnostics(){ diagnosticMarks_.clear(); update(); }
+
+bool SphereView::prepareObjectRemoval(){
+    if(!hasAiSelection_||aiMask_.isNull())return false;
+    // Expand the mask slightly to include antialiased object boundaries.
+    const QImage original=aiMask_;
+    const int w=original.width(),h=original.height();
+    const int radius=std::clamp(w/1024,2,12);
+    QImage expanded=original;
+    for(int y=0;y<h;++y){
+        auto *dst=expanded.scanLine(y);
+        const auto *src=original.constScanLine(y);
+        for(int x=0;x<w;++x)if(src[x]>127){
+            for(int d=-radius;d<=radius;++d)dst[(x+d+w)%w]=255;
+        }
+    }
+    const QImage horizontal=expanded;
+    for(int y=0;y<h;++y){
+        auto *dst=expanded.scanLine(y);
+        for(int j=std::max(0,y-radius);j<=std::min(h-1,y+radius);++j){
+            const auto *src=horizontal.constScanLine(j);
+            for(int x=0;x<w;++x)dst[x]=std::max(dst[x],src[x]);
+        }
+    }
+    ++selectionRequest_;
+    aiMask_=expanded;fullMaskDirty_=true;
+    setMode(Mode::AiInpaint);
+    update();return true;
+}
