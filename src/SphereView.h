@@ -21,7 +21,7 @@ class SphereView final : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Co
     Q_OBJECT
 public:
     enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch,
-                      AiSharpen, AiInpaint };
+                      AiSharpen, AiInpaint, RoundObject };
     explicit SphereView(QWidget *parent = nullptr);
     ~SphereView() override;
     bool openImage(const QString &path, QString *error = nullptr);
@@ -39,6 +39,7 @@ public:
     bool applyAiResult(const SphericalAI::Patch &patch, const QImage &result);
     void clearAiSelection();
     void smoothSeam();
+    void roundObject();
     bool isModified() const { return modified_; }
 
 signals:
@@ -66,6 +67,8 @@ private:
     void pushUndo();
     void setModified(bool modified);
     void refreshComposite();
+    std::optional<QVector3D> roundCenter_;
+    QVector<QVector3D> roundContour_;
     QImage baseImage_;
     QImage editLayer_;
     QImage composite_;
