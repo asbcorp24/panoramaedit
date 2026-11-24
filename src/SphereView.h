@@ -41,6 +41,7 @@ public:
     void clearAiSelection();
     void smoothSeam();
     void smartSeam();
+    void previewSeam();
     void selectSeamForAi();
     void showSeam();
     void roundObject();
