@@ -44,6 +44,7 @@ public:
     void previewSeam();
     void selectSeamForAi();
     void showSeam();
+    void diagnosePanorama();
     void roundObject();
     void applyMesh();
     void resetMesh();
