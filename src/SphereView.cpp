@@ -426,6 +426,20 @@ void SphereView::paintGL() {
     glDrawElements(GL_TRIANGLES, indexCount_, GL_UNSIGNED_INT, nullptr);
     vertexArray_.release();
     shader_->release();
+    if (diagnosticDocument_==documentId_ && diagnosticRevision_==revision_ && !diagnosticMarks_.isEmpty()) {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        for(const auto &m:diagnosticMarks_){
+            auto p=projection*view*QVector4D(m.direction,1);
+            if(p.w()<=0.001f)continue;
+            QPointF pos((p.x()/p.w()+1)*width()/2,(1-p.y()/p.w())*height()/2);
+            if(!rect().adjusted(-20,-20,20,20).contains(pos.toPoint()))continue;
+            painter.setPen(QPen(m.color,2));
+            QColor fill=m.color;fill.setAlpha(65);painter.setBrush(fill);
+            painter.drawEllipse(pos,13,13);
+            painter.drawText(pos+QPointF(17,-8),m.label);
+        }
+    }
     if (mode_ == Mode::MeshWarp && meshCenter_) {
         QPainter painter(this); painter.setPen(QPen(Qt::cyan, 1));
         QPointF pts[16]; bool visible[16];
@@ -951,6 +965,7 @@ void SphereView::previewSeam(){
 
 void SphereView::diagnosePanorama(){
     if(!hasImage())return;
+    clearDiagnostics();
     const QImage img=composite_.scaled(1024,512,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
     struct Issue{QString name;int x,y;double score;};
     QVector<Issue> issues;
@@ -973,6 +988,52 @@ void SphereView::diagnosePanorama(){
         }
         if(edge/n>4 && lap/(edge+1)<0.18)issues.push_back({tr("Возможное размытие"),x,y,edge/(lap+1)});
     }
+    // Estimate a dominant sinusoidal edge near the equator. A tilted
+    // great circle projects approximately as a sinusoid for small tilts.
+    double aa=0,bb=0,energy=0;int valid=0;
+    for(int x=8;x<1024;x+=16){
+        int bestY=256,best=0;
+        for(int y=192;y<=320;++y){
+            int g=std::abs(gray(x,y+2)-gray(x,y-2));
+            if(g>best){best=g;bestY=y;}
+        }
+        if(best<35)continue;
+        double angle=x*360.0/1024*rad;
+        aa+=(bestY-256)*std::sin(angle);bb+=(bestY-256)*std::cos(angle);
+        energy+=(bestY-256)*(bestY-256);++valid;
+    }
+    if(valid>=40){
+        aa*=2.0/valid;bb*=2.0/valid;
+        double amplitude=std::hypot(aa,bb);
+        if(amplitude>9 && amplitude*amplitude*valid/2>energy*0.65){
+            for(int x=128;x<1024;x+=256){
+                double angle=x*360.0/1024*rad;
+                issues.push_back({tr("Возможный наклон горизонта"),x,int(256+aa*std::sin(angle)+bb*std::cos(angle)),amplitude*180/512});
+            }
+        }
+    }
+    // Compare directional gradients after compensating for spherical
+    // longitude compression. This is a heuristic, not object recognition.
+    for(int y: {16,32,479,495}){
+        double latitude=(90-y*180.0/512)*rad;
+        int dx=std::clamp(int(std::lround(1/std::max(0.08,std::cos(latitude)))),1,12);
+        for(int x=64;x<1024;x+=128){
+            double gx=0,gy=0;int n=0;
+            for(int j=y-6;j<=y+6;j+=2)for(int i=x-48;i<=x+48;i+=4){
+                gx+=std::abs(gray(i+dx,j)-gray(i-dx,j));
+                gy+=std::abs(gray(i,j+1)-gray(i,j-1));++n;
+            }
+            if(gy/n>8 && gx<gy*0.22)issues.push_back({tr("Возможное растяжение полюса"),x,y,gy/(gx+1)});
+        }
+    }
+    diagnosticDocument_=documentId_;diagnosticRevision_=revision_;
+    for(const auto &i:issues){
+        QColor color= i.name==tr("Перепад на шве")?QColor(255,80,70):
+            i.name==tr("Возможное размытие")?QColor(255,190,40):
+            i.name==tr("Возможный наклон горизонта")?QColor(70,210,255):QColor(220,100,255);
+        diagnosticMarks_.push_back({SphericalRaster::pixelDirection(i.x,i.y,1024,512),color,i.name});
+    }
+    update();
     if(issues.isEmpty()){emit statusMessage(tr("Диагностика: явных перепадов шва и подозрительного размытия не найдено."));return;}
     QStringList choices;
     for(const auto &i:issues)choices<<tr("%1 — долгота %2°, широта %3°").arg(i.name).arg(i.x*360.0/1024-180,0,'f',1).arg(90-i.y*180.0/512,0,'f',1);
@@ -981,6 +1042,8 @@ void SphereView::diagnosePanorama(){
     if(!ok)return;
     int index=choices.indexOf(choice);if(index<0)return;
     const auto i=issues[index];
-    showHorizon();yaw_=180.f-i.x*360.f/1024;pitch_=90.f-i.y*180.f/512;fov_=55;update();
+    showHorizon();yaw_=180.f-i.x*360.f/1024;pitch_=i.y*180.f/512-90.f;fov_=55;update();
     emit statusMessage(i.name);
 }
+
+void SphereView::clearDiagnostics(){ diagnosticMarks_.clear(); update(); }
