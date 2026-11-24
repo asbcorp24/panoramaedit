@@ -244,6 +244,8 @@ uniform sampler2D uMask;
 uniform bool uShowMask;
 uniform bool uColorPreview;
 uniform bool uLevelPreview;
+uniform bool uPoleStretchPreview;
+uniform float uPoleStretch;
 uniform vec4 uLevelRotation;
 uniform float uColorValues[6];
 uniform bool uMesh;
@@ -274,6 +276,7 @@ void main() {
     float u = 0.5 + atan(sampleD.x, -sampleD.z) / (2.0 * PI);
     // OpenGL treats the first row of QImage as the bottom texture row (v=0).
     float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
+    if(uPoleStretchPreview){v+=uPoleStretch;if(v<0.0 || v>1.0){fragColor=vec4(0.12,0.12,0.12,1);return;}}
     fragColor = texture(uPanorama, vec2(u, v));
     if (uColorPreview) {
         vec3 rgb=fragColor.rgb;
@@ -434,6 +437,8 @@ void SphereView::paintGL() {
     shader_->setUniformValue("uMask", 1);
     shader_->setUniformValue("uColorPreview",colorPreview_);
     shader_->setUniformValue("uLevelPreview",levelPreview_);
+    shader_->setUniformValue("uPoleStretchPreview",poleStretchPreview_);
+    shader_->setUniformValue("uPoleStretch",poleStretch_);
     shader_->setUniformValue("uLevelRotation",QVector4D(levelRotation_.x(),levelRotation_.y(),levelRotation_.z(),levelRotation_.scalar()));
     shader_->setUniformValueArray("uColorValues",colorValues_,6,1);
     shader_->setUniformValue("uShowMask", hasAiSelection_ && !aiMask_.isNull());
@@ -1370,6 +1375,58 @@ void SphereView::manualLevelHorizon(){
                 revision_=nextRevision_++;setModified(revision_!=savedRevision_);
                 clearAiSelection();clearDiagnostics();
                 emit statusMessage(tr("Ориентация сферы применена. Сохраните панораму."));
+            }
+        }
+        update();
+    });
+    dialog->show();
+}
+
+void SphereView::stretchPoleTexture(){
+    if(!hasImage()||levelPreview_||poleStretchPreview_)return;
+    setMode(Mode::Navigate);showHorizon();
+    const QImage original=composite_;
+    const quint64 doc=documentId_,rev=revision_;
+    auto *dialog=new QDialog(this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Натяжение текстуры от полюса"));
+    auto *layout=new QFormLayout(dialog);
+    auto *slider=new QSlider(Qt::Horizontal,dialog);
+    slider->setRange(-900,900);slider->setValue(0);
+    layout->addRow(tr("К надиру / к зениту"),slider);
+    auto *label=new QLabel(tr("0°"),dialog);layout->addRow(label);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog);layout->addRow(buttons);
+    poleStretch_=0;poleStretchPreview_=true;update();
+    connect(slider,&QSlider::valueChanged,dialog,[=,this](int value){
+        poleStretch_=value/1800.f;label->setText(QString::number(value/10.0,'f',1)+QStringLiteral("°"));update();
+    });
+    connect(buttons,&QDialogButtonBox::accepted,dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,dialog,&QDialog::reject);
+    connect(dialog,&QDialog::finished,this,[=,this](int decision){
+        float shift=poleStretch_;poleStretchPreview_=false;
+        if(decision==QDialog::Accepted && doc==documentId_ && rev==revision_ && std::abs(shift)>0.00001f){
+            QImage result(original.size(),QImage::Format_RGBA8888);
+            if(!result.isNull()){
+                result.fill(Qt::transparent);
+                for(int y=0;y<result.height();++y){
+                    float v=(y+0.5f)/result.height()+shift;
+                    if(v<0||v>1)continue;
+                    for(int x=0;x<result.width();++x){
+                        float lon=((x+0.5f)/result.width()*2-1)*PI;
+                        auto d=sphereDir(lon,(0.5f-v)*PI);
+                        result.setPixelColor(x,y,QColor::fromRgba(SphericalRaster::sampleDirection(original,d)));
+                    }
+                }
+                pushUndo();
+                // The current layer compositor treats transparent pixels as
+                // unedited; use an opaque dark placeholder for the hole.
+                for(int y=0;y<result.height();++y){
+                    float v=(y+0.5f)/result.height()+shift;
+                    if(v<0||v>1)for(int x=0;x<result.width();++x)result.setPixelColor(x,y,QColor(30,30,30));
+                }
+                editLayer_=result;composite_=result;fullTextureDirty_=true;
+                revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+                clearAiSelection();clearDiagnostics();
             }
         }
         update();
