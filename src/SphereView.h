@@ -49,6 +49,7 @@ public:
     void localColorCorrection();
     void clearDiagnostics();
     void roundObject();
+    void roundFromSelection();
     void applyMesh();
     void resetMesh();
     void straightenLine();
