@@ -178,6 +178,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     roundApply->setFixedSize(48,46);
     buttons->addWidget(roundApply,3,1);
     connect(roundApply, &QPushButton::clicked, view_, &SphereView::roundObject);
+    auto *poleRow = new QHBoxLayout();
+    auto *zenith = new QPushButton(tr("Зенит"), panel);
+    auto *nadir = new QPushButton(tr("Надир"), panel);
+    auto *horizon = new QPushButton(tr("Обычный вид"), panel);
+    poleRow->addWidget(zenith); poleRow->addWidget(nadir); poleRow->addWidget(horizon);
+    panelLayout->addLayout(poleRow);
+    connect(zenith, &QPushButton::clicked, view_, &SphereView::showZenith);
+    connect(nadir, &QPushButton::clicked, view_, &SphereView::showNadir);
+    connect(horizon, &QPushButton::clicked, view_, &SphereView::showHorizon);
+    auto *poleRepair = new QPushButton(tr("Сгладить полюс"), panel);
+    panelLayout->addWidget(poleRepair);
+    connect(poleRepair, &QPushButton::clicked, view_, &SphereView::repairPole);
     auto *lineApply = new QPushButton(tr("Выпрямить линию"), panel);
     auto *lineReset = new QPushButton(tr("Сбросить линию"), panel);
     panelLayout->addWidget(lineApply);
