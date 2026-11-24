@@ -243,42 +243,51 @@ QRegion smartSeam(QImage &layer,QImage &composite,int halfWidthPixels,double str
     const int w=src.width(),h=src.height(),half=std::clamp(halfWidthPixels,2,w/4);
     const int search=std::min({half/2,h/20,48});
     const int step=32, blocks=(h+step-1)/step;
-    std::vector<float> shifts(blocks,0);
-    auto gray=[&](int x,int y){return float(qGray(src.pixel(x,std::clamp(y,0,h-1))));};
+    std::vector<float> shifts(blocks,0), horizontal(blocks,0);
+    auto gray=[&](int x,int y){return float(qGray(src.pixel(std::clamp(x,0,w-1),std::clamp(y,0,h-1))));};
     auto grad=[&](int x,int y){return gray(x,y+1)-gray(x,y-1);};
+    const int lateral=std::min(12,half/4);
     for(int b=0;b<blocks;++b){
         int cy=std::min(h-1,b*step+step/2);
-        double best=1e30,zero=0;int shift=0;
-        for(int d=-search;d<=search;++d){
+        double best=1e30,zero=0;int dy=0,dx=0;
+        for(int q=0;q<=lateral;q+=1)for(int d=-search;d<=search;++d){
             double cost=0,energy=0;
             for(int j=-24;j<=24;j+=2){
-                float a=grad(0,cy+j),z=grad(w-1,cy+j+d);
+                float a=grad(q,cy+j),z=grad(w-1-q,cy+j+d);
                 cost+=std::abs(a-z);energy+=std::abs(a)+std::abs(z);
             }
-            cost=cost/(energy+50)+0.002*std::abs(d);
-            if(d==0)zero=cost;
-            if(cost<best){best=cost;shift=d;}
+            cost=cost/(energy+50)+0.002*std::abs(d)+0.012*q;
+            if(d==0&&q==0)zero=cost;
+            if(cost<best){best=cost;dy=d;dx=q;}
         }
-        if(best+0.08<zero)shifts[b]=float(shift);
+        if(best+0.08<zero){shifts[b]=float(dy);horizontal[b]=float(dx);}
     }
-    auto smooth=shifts;
-    for(int b=0;b<blocks;++b)smooth[b]=(shifts[std::max(0,b-1)]+2*shifts[b]+shifts[std::min(blocks-1,b+1)])/4;
-    auto sample=[&](int x,float y){
-        y=std::clamp(y,0.f,float(h-1));int i=int(y);float f=y-i;
-        auto a=src.pixelColor(x,i),b=src.pixelColor(x,std::min(i+1,h-1));
-        return QColor::fromRgbF(a.redF()*(1-f)+b.redF()*f,a.greenF()*(1-f)+b.greenF()*f,a.blueF()*(1-f)+b.blueF()*f);
+    auto smooth=shifts, smoothX=horizontal;
+    for(int b=0;b<blocks;++b){
+        int l=std::max(0,b-1),r=std::min(blocks-1,b+1);
+        smooth[b]=(shifts[l]+2*shifts[b]+shifts[r])/4;
+        smoothX[b]=(horizontal[l]+2*horizontal[b]+horizontal[r])/4;
+    }
+    auto sample=[&](float x,float y){
+        x=std::clamp(x,0.f,float(w-1));y=std::clamp(y,0.f,float(h-1));
+        int ix=int(x),iy=int(y);float fx=x-ix,fy=y-iy;
+        auto a=src.pixelColor(ix,iy),b=src.pixelColor(std::min(ix+1,w-1),iy);
+        auto c=src.pixelColor(ix,std::min(iy+1,h-1)),d=src.pixelColor(std::min(ix+1,w-1),std::min(iy+1,h-1));
+        auto mix=[&](float a,float b,float c,float d){return (a*(1-fx)+b*fx)*(1-fy)+(c*(1-fx)+d*fx)*fy;};
+        return QColor::fromRgbF(mix(a.redF(),b.redF(),c.redF(),d.redF()),mix(a.greenF(),b.greenF(),c.greenF(),d.greenF()),mix(a.blueF(),b.blueF(),c.blueF(),d.blueF()));
     };
     for(int y=0;y<h;++y){
         float pos=std::clamp(float(y)/step-0.5f,0.f,float(blocks-1));int b=int(pos);
         float shift=(smooth[b]*(1-(pos-b))+smooth[std::min(b+1,blocks-1)]*(pos-b))*float(strength);
         shift*=std::min(1.f,float(std::min(y,h-1-y))/std::max(1,search));
-        auto l=sample(0,y-shift/2),r=sample(w-1,y+shift/2);
+        float sx=(smoothX[b]*(1-(pos-b))+smoothX[std::min(b+1,blocks-1)]*(pos-b))*float(strength);
+        auto l=sample(sx,y-shift/2),r=sample(w-1-sx,y+shift/2);
         float delta[3]={float(r.redF()-l.redF()),float(r.greenF()-l.greenF()),float(r.blueF()-l.blueF())};
         for(int d=0;d<half;++d){
             float t=1.f-float(d)/half;float k=t*t*(3-2*t);
             for(int side=0;side<2;++side){
                 int x=side?w-1-d:d;float sign=side?1.f:-1.f;
-                auto c=sample(x,y+sign*shift*k/2);
+                auto c=sample(x-sign*sx*k,y+sign*shift*k/2);
                 auto out=QColor::fromRgbF(std::clamp(float(c.redF())-sign*delta[0]*k*float(strength)/2,0.f,1.f),std::clamp(float(c.greenF())-sign*delta[1]*k*float(strength)/2,0.f,1.f),std::clamp(float(c.blueF())-sign*delta[2]*k*float(strength)/2,0.f,1.f));
                 layer.setPixelColor(x,y,out);composite.setPixelColor(x,y,out);
             }
