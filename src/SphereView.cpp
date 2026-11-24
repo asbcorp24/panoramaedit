@@ -1,3 +1,4 @@
+#include <QOpenGLFramebufferObject>
 #include <QSignalBlocker>
 #include <QLabel>
 #include <QDialog>
@@ -1405,25 +1406,74 @@ void SphereView::stretchPoleTexture(){
     connect(dialog,&QDialog::finished,this,[=,this](int decision){
         float shift=poleStretch_;poleStretchPreview_=false;
         if(decision==QDialog::Accepted && doc==documentId_ && rev==revision_ && std::abs(shift)>0.00001f){
-            QImage result(original.size(),QImage::Format_RGBA8888);
-            if(!result.isNull()){
-                result.fill(Qt::transparent);
-                for(int y=0;y<result.height();++y){
-                    float v=(y+0.5f)/result.height()+shift;
-                    if(v<0||v>1)continue;
-                    for(int x=0;x<result.width();++x){
-                        float lon=((x+0.5f)/result.width()*2-1)*PI;
-                        auto d=sphereDir(lon,(0.5f-v)*PI);
-                        result.setPixelColor(x,y,QColor::fromRgba(SphericalRaster::sampleDirection(original,d)));
+            QImage result;
+            // Render into a separate framebuffer; never sample the render target.
+            if(isValid() && context()){
+                makeCurrent();
+                GLint maxSize=0,oldFbo=0,oldViewport[4]={};
+                glGetIntegerv(GL_MAX_TEXTURE_SIZE,&maxSize);
+                glGetIntegerv(GL_FRAMEBUFFER_BINDING,&oldFbo);
+                glGetIntegerv(GL_VIEWPORT,oldViewport);
+                if(original.width()<=maxSize && original.height()<=maxSize){
+                    QOpenGLShaderProgram program;
+                    const char *vs=R"(#version 330 core
+out vec2 uv;
+void main(){
+    vec2 p=vec2((gl_VertexID==1)?3.0:-1.0,(gl_VertexID==2)?3.0:-1.0);
+    uv=p*0.5+0.5;gl_Position=vec4(p,0,1);
+})";
+                    const char *fs=R"(#version 330 core
+in vec2 uv;out vec4 color;
+uniform sampler2D sourceImage;uniform float shift;
+void main(){
+    float v=uv.y+shift;
+    color=(v<0.0||v>1.0)?vec4(30.0/255.0,30.0/255.0,30.0/255.0,1):texture(sourceImage,vec2(uv.x,v));
+})";
+                    if(program.addShaderFromSourceCode(QOpenGLShader::Vertex,vs)&&
+                       program.addShaderFromSourceCode(QOpenGLShader::Fragment,fs)&&program.link()){
+                        glActiveTexture(GL_TEXTURE0);uploadTexture();
+                        QOpenGLFramebufferObject fbo(original.size(),QOpenGLFramebufferObject::NoAttachment,GL_TEXTURE_2D,GL_RGBA8);
+                        if(fbo.isValid()&&fbo.bind()){
+                            GLboolean depth=glIsEnabled(GL_DEPTH_TEST),blend=glIsEnabled(GL_BLEND),scissor=glIsEnabled(GL_SCISSOR_TEST);
+                            glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_SCISSOR_TEST);
+                            glViewport(0,0,original.width(),original.height());
+                            QOpenGLVertexArrayObject vao;vao.create();vao.bind();
+                            program.bind();glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,texture_);
+                            program.setUniformValue("sourceImage",0);program.setUniformValue("shift",shift);
+                            glDrawArrays(GL_TRIANGLES,0,3);
+                            result=QImage(original.size(),QImage::Format_RGBA8888);
+                            if(!result.isNull()){
+                                glPixelStorei(GL_PACK_ALIGNMENT,1);
+                                glReadPixels(0,0,result.width(),result.height(),GL_RGBA,GL_UNSIGNED_BYTE,result.bits());
+                                if(glGetError()!=GL_NO_ERROR)result=QImage();
+                            }
+                            program.release();vao.release();
+                            if(depth)glEnable(GL_DEPTH_TEST);if(blend)glEnable(GL_BLEND);if(scissor)glEnable(GL_SCISSOR_TEST);
+                        }
                     }
                 }
-                pushUndo();
-                // The current layer compositor treats transparent pixels as
-                // unedited; use an opaque dark placeholder for the hole.
-                for(int y=0;y<result.height();++y){
-                    float v=(y+0.5f)/result.height()+shift;
-                    if(v<0||v>1)for(int x=0;x<result.width();++x)result.setPixelColor(x,y,QColor(30,30,30));
+                glBindFramebuffer(GL_FRAMEBUFFER,GLuint(oldFbo));
+                glViewport(oldViewport[0],oldViewport[1],oldViewport[2],oldViewport[3]);
+                doneCurrent();
+            }
+            const bool gpuDone=!result.isNull();
+            if(!gpuDone){
+                result=QImage(original.size(),QImage::Format_RGBA8888);
+                if(!result.isNull()){
+                    result.fill(QColor(30,30,30));
+                    for(int y=0;y<result.height();++y){
+                        float v=(y+0.5f)/result.height()+shift;
+                        if(v<0||v>1)continue;
+                        for(int x=0;x<result.width();++x){
+                            float lon=((x+0.5f)/result.width()*2-1)*PI;
+                            result.setPixelColor(x,y,QColor::fromRgba(SphericalRaster::sampleDirection(original,sphereDir(lon,(0.5f-v)*PI))));
+                        }
+                    }
                 }
+            }
+            if(!result.isNull()){
+                emit statusMessage(gpuDone?tr("Натяжение: OpenGL"):tr("Натяжение: резервный CPU"));
+                pushUndo();
                 editLayer_=result;composite_=result;fullTextureDirty_=true;
                 revision_=nextRevision_++;setModified(revision_!=savedRevision_);
                 clearAiSelection();clearDiagnostics();
