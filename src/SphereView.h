@@ -31,7 +31,7 @@ public:
     void setMode(Mode mode);
     void setBrushColor(const QColor &color) { brushColor_ = color; }
     void setBrushRadius(double degrees);
-    void setToolStrength(double value) { toolStrength_ = value; }
+    void setToolStrength(double value) { toolStrength_ = qBound(0.0, value, 1.0); update(); }
     void undo();
     void redo();
     Mode mode() const { return mode_; }
