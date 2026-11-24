@@ -42,8 +42,9 @@ SphereView::~SphereView() {
 void SphereView::setMode(Mode mode) {
     resetMesh();
     mode_ = mode;
+    if (mode == Mode::Straighten) emit statusMessage(tr("Отметьте минимум три точки линии по порядку, затем примените."));
     if (mode == Mode::MeshWarp) emit statusMessage(tr("Сетка: выберите центр, перетаскивайте внутренние узлы, затем примените."));
-    roundCenter_.reset(); roundContour_.clear();
+    roundCenter_.reset(); roundContour_.clear(); linePoints_.clear();
     if (mode == Mode::RoundObject) emit statusMessage(tr("Округление: щёлкните центр, затем точки контура; Enter — применить."));
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
     update(); // Refresh the angular brush outline on tool switches.
@@ -96,7 +97,7 @@ bool SphereView::openImage(const QString &path, QString *error) {
             .arg(loaded.width()).arg(loaded.height());
         return false;
     }
-    roundCenter_.reset(); roundContour_.clear();
+    roundCenter_.reset(); roundContour_.clear(); linePoints_.clear();
     resetMesh();
     baseImage_ = loaded.convertToFormat(QImage::Format_RGBA8888);
     editLayer_ = QImage(baseImage_.size(), QImage::Format_RGBA8888);
@@ -143,6 +144,7 @@ void SphereView::refreshComposite() {
     update();
 }
 void SphereView::undo() {
+    if (!linePoints_.isEmpty()) { linePoints_.removeLast(); update(); return; }
     if (meshCenter_) { resetMesh(); return; }
     if (undoStack_.empty() || editLayer_.isNull()) return;
     redoStack_.push_back({editLayer_, revision_});
@@ -431,6 +433,21 @@ void SphereView::paintGL() {
             if(i%4>0 && i%4<3 && i/4>0 && i/4<3) painter.drawEllipse(pts[i],5,5);
         }
     }
+    if (mode_ == Mode::Straighten && !linePoints_.isEmpty()) {
+        QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
+        auto project=[&](const QVector3D &d)->std::optional<QPointF>{
+            auto p=projection*view*QVector4D(d,1);
+            if(p.w()<=0.001f) return {};
+            return QPointF((p.x()/p.w()+1)*width()/2,(1-p.y()/p.w())*height()/2);
+        };
+        painter.setPen(QPen(Qt::yellow,2));
+        std::optional<QPointF> prev;
+        for(const auto &d:linePoints_) {
+            auto p=project(d); if(p){painter.drawEllipse(*p,4,4);if(prev)painter.drawLine(*prev,*p);} prev=p;
+        }
+        auto a=project(linePoints_.front()), b=project(linePoints_.back());
+        painter.setPen(QPen(Qt::cyan,2,Qt::DashLine)); if(a&&b)painter.drawLine(*a,*b);
+    }
     if (mode_ == Mode::RoundObject && roundCenter_) {
         QPainter painter(this);
         painter.setPen(QPen(Qt::cyan, 2));
@@ -526,6 +543,10 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if (mode_ == Mode::Straighten && event->button()==Qt::LeftButton && hasImage()) {
+        if (linePoints_.size()<128) linePoints_.append(cursorDirection_);
+        update(); event->accept(); return;
+    }
     if (mode_ == Mode::MeshWarp && event->button()==Qt::LeftButton && hasImage()) {
         if (!meshCenter_) {
             meshCenter_=cursorDirection_;
@@ -726,4 +747,59 @@ void SphereView::applyMesh() {
     }
     partialTextureDirty_+=dirty; revision_=nextRevision_++;setModified(revision_!=savedRevision_);resetMesh();
     emit statusMessage(tr("Деформация сетки применена. Ctrl+Z — отменить."));
+}
+
+void SphereView::resetLine() { linePoints_.clear(); update(); }
+void SphereView::straightenLine() {
+    if(mode_!=Mode::Straighten || linePoints_.size()<3 || !hasImage()) {
+        emit statusMessage(tr("Укажите минимум три точки линии.")); return;
+    }
+    const auto a=linePoints_.front(), b=linePoints_.back();
+    const auto cross=QVector3D::crossProduct(a,b);
+    const float length=std::acos(clampf(QVector3D::dotProduct(a,b),-1,1));
+    if(cross.length()<0.001f || length>2.6f) { emit statusMessage(tr("Выберите более короткий участок линии.")); return; }
+    const auto n=cross.normalized(), t=QVector3D::crossProduct(n,a).normalized();
+    std::vector<std::pair<float,float>> samples;
+    float maxOffset=0;
+    for(const auto &d:linePoints_) {
+        float x=std::atan2(QVector3D::dotProduct(d,t),QVector3D::dotProduct(d,a));
+        float y=std::asin(clampf(QVector3D::dotProduct(d,n),-1,1));
+        if(!samples.empty() && x<=samples.back().first+0.00001f) {
+            emit statusMessage(tr("Точки должны идти последовательно от начала к концу.")); return;
+        }
+        samples.emplace_back(x,y); maxOffset=std::max(maxOffset,std::abs(y));
+    }
+    samples.front()={0,0}; samples.back()={length,0};
+    if(maxOffset<0.00001f || toolStrength_<=0) { resetLine(); return; }
+    const float radius=std::max(float(brushRadius_)*rad,2.f*maxOffset+0.001f);
+    if(radius>1.2f) {emit statusMessage(tr("Слишком сильное искривление. Разделите линию на участки."));return;}
+    const QImage source=composite_; pushUndo();
+    QRegion dirty;
+    for(int y=0;y<source.height();++y) {
+        int start=-1;
+        for(int x=0;x<source.width();++x) {
+            auto d=SphericalRaster::pixelDirection(x,y,source.width(),source.height());
+            float along=std::atan2(QVector3D::dotProduct(d,t),QVector3D::dotProduct(d,a));
+            float across=std::asin(clampf(QVector3D::dotProduct(d,n),-1,1));
+            if(along<=0 || along>=length || std::abs(across)>=radius) {
+                if(start>=0){dirty+=QRect(start,y,x-start,1);start=-1;} continue;
+            }
+            auto hi=std::upper_bound(samples.begin(),samples.end(),along,[](float v,const auto &p){return v<p.first;});
+            if(hi==samples.end()||hi==samples.begin()) continue;
+            auto lo=hi-1;
+            float f=(along-lo->first)/(hi->first-lo->first);
+            float offset=lo->second+(hi->second-lo->second)*f;
+            float desired=offset*(1-float(toolStrength_));
+            float original=across;
+            if(across<=desired) original=-radius+(across+radius)*(offset+radius)/(desired+radius);
+            else original=offset+(across-desired)*(radius-offset)/(radius-desired);
+            auto direction=(a*std::cos(along)+t*std::sin(along))*std::cos(original)+n*std::sin(original);
+            auto color=QColor::fromRgb(SphericalRaster::sampleDirection(source,direction));
+            editLayer_.setPixelColor(x,y,color); composite_.setPixelColor(x,y,color);
+            if(start<0)start=x;
+        }
+        if(start>=0)dirty+=QRect(start,y,source.width()-start,1);
+    }
+    partialTextureDirty_+=dirty; revision_=nextRevision_++; setModified(revision_!=savedRevision_);
+    resetLine(); emit statusMessage(tr("Линия выпрямлена. Ctrl+Z — отменить."));
 }
