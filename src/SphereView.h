@@ -45,6 +45,10 @@ public:
     void resetMesh();
     void straightenLine();
     void resetLine();
+    void showZenith();
+    void showNadir();
+    void showHorizon();
+    void repairPole();
     bool isModified() const { return modified_; }
 
 signals:
@@ -102,6 +106,9 @@ private:
     QColor brushColor_{Qt::red};
     double brushRadius_ = 2.0;
     double toolStrength_ = 0.5;
+    int poleView_ = 0;
+    float savedPitch_ = 0, savedFov_ = 75;
+    void showPole(int pole);
     float yaw_ = 0.0f;
     float pitch_ = 0.0f;
     float fov_ = 75.0f;
