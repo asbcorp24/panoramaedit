@@ -445,3 +445,39 @@ Result run(Mode mode, const QString &modelPath, const QImage &image,
 #endif
 }
 } // namespace AiEngine
+
+AiEngine::Result AiEngine::segment(const QString &path,const QImage &image) {
+#ifdef _WIN32
+    try {
+        QFileInfo file(path);
+        if(!file.isFile()) return {{},QStringLiteral("Не найдена модель SAM: %1").arg(path)};
+        auto &ctx=runtime(); std::lock_guard lock(ctx.mutex);
+        static CachedSession cached;
+        ensureSession(ctx,cached,path,file);
+        auto run=[&]()->QImage {
+            auto rgb=rgbTensor(image.scaled(1024,1024,Qt::IgnoreAspectRatio,Qt::SmoothTransformation),1024,1024,false);
+            // Standard SAM RGB normalization.
+            const float mean[]={123.675f,116.28f,103.53f}, sd[]={58.395f,57.12f,57.375f};
+            for(size_t i=0;i<rgb.data.size();++i){int c=int(i/(1024*1024));rgb.data[i]=(rgb.data[i]*255-mean[c])/sd[c];}
+            float coords[]={512,512}, labels[]={1};
+            int64_t cs[]={1,1,2},ls[]={1,1};
+            auto mem=Ort::MemoryInfo::CreateCpu(OrtArenaAllocator,OrtMemTypeDefault);
+            std::vector<Ort::Value> values;
+            values.push_back(Ort::Value::CreateTensor<float>(mem,rgb.data.data(),rgb.data.size(),rgb.shape.data(),rgb.shape.size()));
+            values.push_back(Ort::Value::CreateTensor<float>(mem,coords,2,cs,3));
+            values.push_back(Ort::Value::CreateTensor<float>(mem,labels,1,ls,2));
+            const char *names[]={"image","point_coords","point_labels"}, *out[]={"masks"};
+            auto result=cached.session->Run(Ort::RunOptions{nullptr},names,values.data(),3,out,1);
+            auto info=result[0].GetTensorTypeAndShapeInfo(); auto sh=info.GetShape();
+            if(sh.size()!=4||sh[0]!=1||sh[1]!=1||sh[2]<1||sh[3]<1||sh[2]>4096||sh[3]>4096||info.GetElementType()!=ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) throw std::runtime_error("Unexpected SAM mask shape");
+            QImage mask(int(sh[3]),int(sh[2]),QImage::Format_Grayscale8);
+            auto data=result[0].GetTensorData<float>();
+            for(int y=0;y<mask.height();++y)for(int x=0;x<mask.width();++x)mask.scanLine(y)[x]=data[size_t(y)*mask.width()+x]>0?255:0;
+            return mask;
+        };
+        try{return {run(),{},cached.gpu};}catch(const Ort::Exception &){if(!cached.gpu)throw;openSession(ctx,cached,path,file,false);return {run(),{},false};}
+    }catch(const std::exception &e){return {{},QString::fromLocal8Bit(e.what())};}
+#else
+    Q_UNUSED(path); Q_UNUSED(image); return {{},QStringLiteral("SAM доступен на Windows")};
+#endif
+}
