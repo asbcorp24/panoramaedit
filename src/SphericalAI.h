@@ -28,6 +28,7 @@ QRegion applyPatch(QImage &layer, QImage &composite, const Patch &patch,
                    const QImage &output, double opacity = 1.0);
 
 // Feather an existing longitude mismatch symmetrically around 0°/360°.
+QRegion smartSeam(QImage &layer, QImage &composite, int halfWidthPixels, double strength);
 QRegion smoothSeam(QImage &layer, QImage &composite, int halfWidthPixels);
 
 } // namespace SphericalAI
