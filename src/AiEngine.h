@@ -7,6 +7,8 @@
 
 namespace AiEngine {
 
+// SAM-compatible combined ONNX graph: image [1,3,1024,1024], point_coords
+// [1,1,2], point_labels [1,1], masks [1,1,H,W] (logits).
 enum class Mode { Sharpen, Inpaint };
 
 enum class Phase { Loading, Processing, Blending, Finished };
@@ -25,6 +27,8 @@ struct Result {
     QString error;
     bool usedGpu = false;
 };
+
+Result segment(const QString &modelPath, const QImage &image);
 
 // Runs entirely in native C++ with ONNX Runtime (DirectML, then CPU fallback).
 // Call on a worker thread, never from the Qt GUI thread.
