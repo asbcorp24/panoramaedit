@@ -178,7 +178,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     panelLayout->addWidget(smartSeam);
     panelLayout->addWidget(seamView);
     panelLayout->addWidget(seamAi);
-    connect(smartSeam, &QPushButton::clicked, view_, &SphereView::smartSeam);
+    connect(smartSeam, &QPushButton::clicked, view_, &SphereView::previewSeam);
     connect(seamView, &QPushButton::clicked, view_, &SphereView::showSeam);
     connect(seamAi, &QPushButton::clicked, this, [this]{view_->selectSeamForAi();startAiRestoration();});
     auto *roundApply = new QPushButton(panel);
