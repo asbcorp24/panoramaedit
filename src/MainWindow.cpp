@@ -134,6 +134,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     addTool(tr("ИИ-дорисовка"), tr("Выделите участок, который нужно заполнить фоном"),
             "J", SphereView::Mode::AiInpaint, ToolIcons::Kind::Inpaint, 1, 4);
 
+    addTool(tr("Округление"), tr("Щёлкните центр и точки по контуру объекта, затем нажмите кнопку применения"), "R", SphereView::Mode::RoundObject, ToolIcons::Kind::Bloat, 3, 0);
     const auto styleActionButton = [buttons](QPushButton *button, ToolIcons::Kind icon,
                                              const QString &name, const QString &hint,
                                              int column) {
@@ -168,6 +169,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *roundApply = new QPushButton(panel);
+    roundApply->setIcon(ToolIcons::make(ToolIcons::Kind::ApplyAi));
+    roundApply->setToolTip(tr("Применить округление объекта"));
+    roundApply->setAccessibleName(tr("Применить округление"));
+    roundApply->setFixedSize(48,46);
+    buttons->addWidget(roundApply,3,1);
+    connect(roundApply, &QPushButton::clicked, view_, &SphereView::roundObject);
     panelLayout->addWidget(new QLabel(tr("Радиус кисти (градусы):"), panel));
     auto *radiusRow = new QHBoxLayout();
     auto *radius = new QSlider(Qt::Horizontal, panel);
