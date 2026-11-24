@@ -184,6 +184,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }
         startAiRestoration();
     });
+    auto *levelHorizon = new QPushButton(tr("Автовыравнивание горизонта"), panel);
+    panelLayout->addWidget(levelHorizon);
+    connect(levelHorizon, &QPushButton::clicked, view_, &SphereView::autoLevelHorizon);
     auto *diagnostics = new QPushButton(tr("Диагностика панорамы"), panel);
     panelLayout->addWidget(diagnostics);
     auto *clearDiagnostics = new QPushButton(tr("Скрыть дефекты"), panel);
