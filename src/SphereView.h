@@ -47,6 +47,7 @@ public:
     void diagnosePanorama();
     void autoLevelHorizon();
     void manualLevelHorizon();
+    void stretchPoleTexture();
     void localColorCorrection();
     void clearDiagnostics();
     void roundObject();
@@ -116,6 +117,8 @@ private:
     GLuint texture_ = 0;
     GLuint maskTexture_ = 0;
     GLsizei indexCount_ = 0;
+    bool poleStretchPreview_=false;
+    float poleStretch_=0;
     bool levelPreview_=false;
     bool levelDragging_=false;
     QVector3D levelAnchor_;
