@@ -187,6 +187,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }
         startAiRestoration();
     });
+    auto *manualLevel = new QPushButton(tr("Ручное выравнивание сферы"), panel);
+    panelLayout->addWidget(manualLevel);
+    connect(manualLevel, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->manualLevelHorizon();});
     auto *levelHorizon = new QPushButton(tr("Автовыравнивание горизонта"), panel);
     panelLayout->addWidget(levelHorizon);
     connect(levelHorizon, &QPushButton::clicked, view_, &SphereView::autoLevelHorizon);
