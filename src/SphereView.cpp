@@ -1595,13 +1595,16 @@ void SphereView::colorGrading(){
     preset->addItems({tr("Нейтральный"),tr("Естественный"),tr("HDR-стиль"),tr("Тёплый"),tr("Холодный"),tr("Кино"),tr("Зимний"),tr("Винтаж"),tr("Чёрно-белый")});
     layout->addRow(tr("Пресет"),preset);
     auto *hist=new QLabel(&dialog);hist->setMinimumSize(256,85);layout->addRow(hist);
-    QSlider *sl[12];
-    const QString names[]={tr("Чёрная точка"),tr("Белая точка"),tr("Гамма ×100"),tr("Яркость"),tr("Контраст"),tr("Насыщенность"),tr("Температура"),tr("Красный"),tr("Зелёный"),tr("Синий"),tr("Тени"),tr("Света")};
-    const int defaults[]={0,255,100,0,0,0,0,0,0,0,0,0};
-    for(int i=0;i<12;++i){
+    QSlider *sl[14];
+    const QString names[]={tr("Чёрная точка"),tr("Белая точка"),tr("Гамма ×100"),tr("Яркость"),tr("Контраст"),tr("Насыщенность"),tr("Температура"),tr("Красный"),tr("Зелёный"),tr("Синий"),tr("Тени"),tr("Света"),tr("HDR — восстановление тонов"),tr("Локальный контраст")};
+    const int defaults[]={0,255,100,0,0,0,0,0,0,0,0,0,0,0};
+    for(int i=0;i<14;++i){
         sl[i]=new QSlider(Qt::Horizontal,&dialog);
         sl[i]->setRange(i<2?0:i==2?10:-100,i<2?255:i==2?300:100);
-        sl[i]->setValue(defaults[i]);layout->addRow(names[i],sl[i]);
+        sl[i]->setValue(defaults[i]);
+        if(i==12)sl[i]->setToolTip(tr("Сжимает светлые тона и мягко поднимает детали в тенях."));
+        if(i==13)sl[i]->setToolTip(tr("Усиливает локальные детали без сильного изменения общего контраста."));
+        layout->addRow(names[i],sl[i]);
     }
     auto *autoButton=new QPushButton(tr("Автоуровни"),&dialog);layout->addRow(autoButton);
     auto *reset=new QPushButton(tr("Сбросить"),&dialog);layout->addRow(reset);
@@ -1631,6 +1634,8 @@ void SphereView::colorGrading(){
         grading_[0]=sl[0]->value()/255.f;
         grading_[1]=std::max(sl[0]->value()+1,sl[1]->value())/255.f;
         for(int i=2;i<12;++i)grading_[i]=sl[i]->value()/100.f;
+        grading_[12]=sl[12]->value()/100.f;
+        grading_[13]=sl[13]->value()/100.f;
         gradingMasked_=scope->isChecked();
     };
     auto render=[&]{
@@ -1696,6 +1701,8 @@ void SphereView::colorGrading(){
         gpuGrade.blue=grading_[9];
         gpuGrade.shadows=grading_[10];
         gpuGrade.highlights=grading_[11];
+        gpuGrade.hdrStrength=grading_[12];
+        gpuGrade.localContrast=grading_[13];
         QString gpuError;
         bool gpuApplied=false;
         if(context() && isValid()){
