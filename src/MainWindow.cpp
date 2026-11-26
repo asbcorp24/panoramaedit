@@ -172,6 +172,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *grading = new QPushButton(tr("Цветокоррекция / уровни"), panel);
+    panelLayout->addWidget(grading);
+    connect(grading, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->colorGrading();});
     auto *localColor = new QPushButton(tr("Локальная цветокоррекция"), panel);
     panelLayout->addWidget(localColor);
     connect(localColor, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->localColorCorrection();});
