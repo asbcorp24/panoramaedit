@@ -31,7 +31,14 @@ uniform bool uUseMask;
 uniform vec4 uLevels;       // black, white, gamma, brightness
 uniform vec4 uTone;         // contrast, saturation, temperature, shadows
 uniform vec4 uChannels;     // red, green, blue, highlights
+uniform bool uSphericalGradient;
+uniform bool uGradientByLatitude;
+uniform vec4 uGradientCenter;
+uniform vec4 uGradientParams; // inner, outer, strength, warmth
+uniform vec4 uTileRect; // global UV offset and scale
+const float PI = 3.14159265358979323846;
 void main() {
+    vec2 globalUV = uTileRect.xy + vUV * uTileRect.zw;
     vec4 original = texture(uSource, vUV);
     vec3 rgb = original.rgb;
     vec3 z = pow(clamp((rgb - uLevels.x) /
@@ -44,6 +51,22 @@ void main() {
     z += uTone.z * 0.12 * vec3(1.0, 0.0, -1.0);
     z += uTone.w * 0.35 * (1.0 - l) * (1.0 - l);
     z += uChannels.w * 0.35 * l * l;
+    if (uSphericalGradient) {
+        float longitude = (globalUV.x - 0.5) * 2.0 * PI;
+        float latitude = (0.5 - globalUV.y) * PI;
+        vec3 direction = vec3(cos(latitude) * sin(longitude), sin(latitude),
+                              -cos(latitude) * cos(longitude));
+        float coord = uGradientByLatitude ? (1.0 - direction.y) * 0.5
+            : acos(clamp(dot(normalize(direction), normalize(uGradientCenter.xyz)), -1.0, 1.0)) / PI;
+        float t = clamp((coord - uGradientParams.x) /
+                        max(0.001, uGradientParams.y - uGradientParams.x), 0.0, 1.0);
+        float falloff = coord <= uGradientParams.x ? 1.0
+            : 1.0 - t * t * (3.0 - 2.0 * t);
+        float warmth = uGradientParams.w * 0.20;
+        vec3 gradientColor = clamp(rgb + vec3(warmth, 0.0, -warmth)
+                                   + (rgb - 0.5) * uGradientParams.z, 0.0, 1.0);
+        z = mix(rgb, gradientColor, falloff);
+    }
     float amount = uUseMask ? texture(uMask, vUV).r : 1.0;
     outColor = vec4(mix(rgb, clamp(z, 0.0, 1.0), amount), original.a);
 }
@@ -148,6 +171,12 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
                             grade.temperature, grade.shadows);
     program.setUniformValue("uChannels", grade.red, grade.green,
                             grade.blue, grade.highlights);
+    program.setUniformValue("uSphericalGradient", grade.sphericalGradient);
+    program.setUniformValue("uGradientByLatitude", grade.gradientByLatitude);
+    program.setUniformValue("uGradientCenter", QVector4D(grade.gradientCenterX,
+        grade.gradientCenterY, grade.gradientCenterZ, 0.0f));
+    program.setUniformValue("uGradientParams", QVector4D(grade.gradientInner,
+        grade.gradientOuter, grade.gradientStrength, grade.gradientWarmth));
 
     for (int y = 0; y < input.height(); y += tileEdge) {
         const int tileHeight = std::min(tileEdge, input.height() - y);
@@ -174,6 +203,9 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
                             .arg(tileWidth).arg(tileHeight));
             }
             gl.glViewport(0, 0, tileWidth, tileHeight);
+            program.setUniformValue("uTileRect", QVector4D(float(x) / input.width(),
+                float(y) / input.height(), float(tileWidth) / input.width(),
+                float(tileHeight) / input.height()));
             gl.glDisable(GL_BLEND);
             gl.glDisable(GL_DEPTH_TEST);
             gl.glActiveTexture(GL_TEXTURE0);
@@ -185,7 +217,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
             const GLenum drawError = gl.glGetError();
             QImage tileResult;
             if (drawError == GL_NO_ERROR)
-                tileResult = fbo.toImage(false).convertToFormat(QImage::Format_RGBA8888);
+                tileResult = fbo.toImage(true).convertToFormat(QImage::Format_RGBA8888);
             fbo.release();
             if (drawError != GL_NO_ERROR || tileResult.size() != rect.size()) {
                 cleanup();
