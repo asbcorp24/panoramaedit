@@ -1765,12 +1765,14 @@ void SphereView::sphericalGradient(){
     connect(before,&QCheckBox::toggled,&dialog,[&](bool){refresh();});
     connect(pick,&QPushButton::clicked,&dialog,[&]{
         gradientPicking_=true;centerLabel->setText(tr("Щёлкните по нужной точке на сфере…"));
+        dialog.hide();
         emit statusMessage(tr("Выберите центр градиента щелчком по сфере."));
     });
     connect(this,&SphereView::gradientCenterPicked,&dialog,[&]{
         centerLabel->setText(tr("Центр выбран: %1°, %2°")
             .arg(std::atan2(gradientCenter_.x(),-gradientCenter_.z())/rad,0,'f',1)
             .arg(std::asin(clampf(gradientCenter_.y(),-1,1))/rad,0,'f',1));
+        dialog.show();
     });
     refresh();
     int decision=dialog.exec();
