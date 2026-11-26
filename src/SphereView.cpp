@@ -1713,6 +1713,31 @@ void SphereView::colorGrading(){
         }else gpuError=tr("OpenGL-контекст недоступен.");
         if(!gpuApplied){
             result=render();
+            const float hdr=grading_[12],local=grading_[13];
+            if(hdr!=0.f||local!=0.f){
+                for(int y=0;y<result.height();++y)for(int x=0;x<result.width();++x){
+                    const float weight=gradingMasked_?mask.constScanLine(y)[x]/255.f:1.f;
+                    if(weight<=0.f)continue;
+                    const QColor c=result.pixelColor(x,y);
+                    const float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
+                    const float lum=.2126f*rgb[0]+.7152f*rgb[1]+.0722f*rgb[2];
+                    float localLum=0.f;
+                    const QPoint samples[4]={{(x+1)%result.width(),y},{(x+result.width()-1)%result.width(),y},
+                        {x,std::max(0,y-1)},{x,std::min(result.height()-1,y+1)}};
+                    for(const QPoint &p:samples){
+                        const QColor n=original.pixelColor(p);
+                        localLum+=.25f*(.2126f*n.redF()+.7152f*n.greenF()+.0722f*n.blueF());
+                    }
+                    const float hdrLum=lum/(1.f+std::max(0.f,hdr)*lum*1.5f);
+                    const float scale=hdrLum/std::max(.001f,lum);
+                    float out[3];
+                    for(int k=0;k<3;++k){
+                        const float target=rgb[k]*(1.f+hdr*(scale-1.f))+hdr*.06f+(lum-localLum)*local*2.f;
+                        out[k]=std::clamp(rgb[k]+weight*(std::clamp(target,0.f,1.f)-rgb[k]),0.f,1.f);
+                    }
+                    result.setPixelColor(x,y,QColor::fromRgbF(out[0],out[1],out[2],c.alphaF()));
+                }
+            }
             emit statusMessage(tr("GPU-обработка недоступна — применён CPU-режим: %1").arg(gpuError));
         }else{
             emit statusMessage(tr("Цветокоррекция обработана на GPU тайлами 2048×2048."));
