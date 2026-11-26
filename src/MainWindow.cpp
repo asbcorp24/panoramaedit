@@ -149,6 +149,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         SphereView::Mode::Straighten, ToolIcons::Kind::Push, 2, 2);
     addTool(tr("Умное выделение"), tr("Щелчок по объекту; Shift добавить, Alt исключить"), "K",
         SphereView::Mode::SmartSelect, ToolIcons::Kind::Sharpen, 2, 3);
+    addTool(tr("Тянуть сферу"), tr("Зажмите точку и перетащите часть панорамы по поверхности сферы"), "W",
+        SphereView::Mode::SphericalWarp, ToolIcons::Kind::Push, 3, 4);
 
     const auto addIconButton = [buttons, panel](QPushButton *button, ToolIcons::Kind icon,
             const QString &name, const QString &hint, int row, int column) {
