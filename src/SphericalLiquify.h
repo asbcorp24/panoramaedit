@@ -4,7 +4,7 @@
 #include <QVector3D>
 
 namespace SphericalLiquify {
-enum class Tool { Smudge, Push, Bloat, Pinch };
+enum class Tool { Smudge, Push, Bloat, Pinch, Stretch, Compress };
 // Pull a spherical region from start to end. The influence falls off geodesically
 // from the destination; longitude wraps and the poles use spherical sampling.
 QRegion applyDrag(QImage &layer, QImage &composite, const QImage &source,
