@@ -256,7 +256,7 @@ uniform vec3 uGradientCenter;
 uniform vec4 uGradientParams;
 uniform bool uPanoramaCorrection;
 uniform float uPanoramaCorrectionValues[28];
-uniform float uGrade[14];
+uniform float uGrade[17];
 uniform bool uLevelPreview;
 uniform bool uPoleStretchPreview;
 uniform float uPoleStretch;
@@ -319,6 +319,18 @@ void main() {
         z=(z-0.5)*(1.0+uGrade[4])+0.5+uGrade[3]*0.25;
         z+=vec3(uGrade[7],uGrade[8],uGrade[9])*0.2+uGrade[6]*0.12*vec3(1,0,-1);
         z+=uGrade[10]*0.35*(1.0-l)*(1.0-l)+uGrade[11]*0.35*l*l;
+        float centerLum=dot(rgb,vec3(0.2126,0.7152,0.0722));
+        float localLum=0.25*(dot(texture(uPanorama,vec2(u+1.0/2048.0,v)).rgb,vec3(0.2126,0.7152,0.0722))
+            +dot(texture(uPanorama,vec2(u-1.0/2048.0,v)).rgb,vec3(0.2126,0.7152,0.0722))
+            +dot(texture(uPanorama,vec2(u,v+1.0/1024.0)).rgb,vec3(0.2126,0.7152,0.0722))
+            +dot(texture(uPanorama,vec2(u,v-1.0/1024.0)).rgb,vec3(0.2126,0.7152,0.0722)));
+        float fineDetail=centerLum-localLum;
+        float dehaze=clamp(uGrade[14],-1.0,1.0);
+        float dehazeLum=dot(z,vec3(0.2126,0.7152,0.0722));
+        z+=(z-0.5)*dehaze*0.55-vec3(fineDetail*dehaze*0.35);
+        z=mix(vec3(dehazeLum),z,clamp(1.0+dehaze*0.22,0.0,1.35));
+        z+=vec3(fineDetail*uGrade[15]*2.2);
+        z+=(rgb-vec3(centerLum))*uGrade[16]*0.32+vec3(fineDetail*uGrade[16]*1.4);
         float hdr=clamp(uGrade[12],0.0,1.0);
         float hdrLum=dot(z,vec3(0.2126,0.7152,0.0722));
         float compressed=hdrLum/(1.0+hdr*hdrLum*1.5);
@@ -497,7 +509,7 @@ void SphereView::paintGL() {
     shader_->setUniformValue("uGradientParams",QVector4D(gradientInner_,gradientOuter_,gradientStrength_,gradientWarmth_));
     shader_->setUniformValueArray("uPanoramaCorrectionValues",panoramaCorrection_,28,1);
     shader_->setUniformValue("uGradingMasked",gradingMasked_);
-    shader_->setUniformValueArray("uGrade",grading_,14,1);
+    shader_->setUniformValueArray("uGrade",grading_,17,1);
     shader_->setUniformValue("uLevelPreview",levelPreview_);
     shader_->setUniformValue("uPoleStretchPreview",poleStretchPreview_);
     shader_->setUniformValue("uPoleStretch",poleStretch_);
