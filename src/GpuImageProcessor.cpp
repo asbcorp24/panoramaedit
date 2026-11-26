@@ -41,10 +41,21 @@ uniform vec3 uWhiteBalance;
 uniform vec3 uSeamDelta;
 uniform float uSeamWidth;
 uniform float uSectorIllumination[16];
+uniform vec4 uHdrLocal; // HDR strength, local contrast, detail, inner UV scale
+uniform vec2 uSourceUvOffset;
 const float PI = 3.14159265358979323846;
 void main() {
     vec2 globalUV = uTileRect.xy + vUV * uTileRect.zw;
-    vec4 original = texture(uSource, vUV);
+    vec2 sourceUV = uSourceUvOffset + vUV * uHdrLocal.w;
+    vec4 original = texture(uSource, sourceUV);
+    vec2 texel = 1.0 / vec2(textureSize(uSource, 0));
+    float centerLum = dot(original.rgb, vec3(0.2126,0.7152,0.0722));
+    float localLum = 0.0;
+    localLum += dot(texture(uSource, sourceUV + vec2(texel.x,0)).rgb,vec3(0.2126,0.7152,0.0722));
+    localLum += dot(texture(uSource, sourceUV - vec2(texel.x,0)).rgb,vec3(0.2126,0.7152,0.0722));
+    localLum += dot(texture(uSource, sourceUV + vec2(0,texel.y)).rgb,vec3(0.2126,0.7152,0.0722));
+    localLum += dot(texture(uSource, sourceUV - vec2(0,texel.y)).rgb,vec3(0.2126,0.7152,0.0722));
+    localLum *= 0.25;
     vec3 rgb = original.rgb;
     vec3 z = pow(clamp((rgb - uLevels.x) /
                       max(0.004, uLevels.y - uLevels.x), 0.0, 1.0),
@@ -56,6 +67,14 @@ void main() {
     z += uTone.z * 0.12 * vec3(1.0, 0.0, -1.0);
     z += uTone.w * 0.35 * (1.0 - l) * (1.0 - l);
     z += uChannels.w * 0.35 * l * l;
+    float hdr = clamp(uHdrLocal.x, 0.0, 1.0);
+    float hdrLum = dot(z, vec3(0.2126,0.7152,0.0722));
+    float compressed = hdrLum / (1.0 + hdr * hdrLum * 1.5);
+    float hdrScale = compressed / max(0.001, hdrLum);
+    z = mix(z, z * hdrScale + vec3(hdr * 0.06), hdr);
+    float localDelta = centerLum - localLum;
+    z += vec3(localDelta * uHdrLocal.y * 2.0);
+    z += (z - vec3(l)) * (uHdrLocal.z * 0.35);
     if (uPanoramaAuto) {
         float sector = globalUV.x * 16.0;
         int sectorIndex = int(floor(sector)) % 16;
@@ -198,15 +217,38 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
         grade.seamDelta[1], grade.seamDelta[2]));
     program.setUniformValue("uSeamWidth", grade.seamWidth);
     program.setUniformValueArray("uSectorIllumination", grade.sectorIllumination, 16, 1);
+    program.setUniformValue("uHdrLocal", QVector4D(grade.hdrStrength,
+        grade.localContrast, grade.detailStrength, 1.0f));
+    program.setUniformValue("uSourceUvOffset", QVector2D(0.0f,0.0f));
 
     for (int y = 0; y < input.height(); y += tileEdge) {
         const int tileHeight = std::min(tileEdge, input.height() - y);
         for (int x = 0; x < input.width(); x += tileEdge) {
             const int tileWidth = std::min(tileEdge, input.width() - x);
             const QRect rect(x, y, tileWidth, tileHeight);
-            const QImage sourceTile = input.copy(rect);
-            QImage maskTile = useMask ? maskImage.copy(rect) : QImage(tileWidth, tileHeight, QImage::Format_Grayscale8);
+            // One-pixel halo prevents visible local-contrast discontinuities at tile borders.
+            QImage sourceTile(tileWidth + 2, tileHeight + 2, QImage::Format_RGBA8888);
+            for (int py=0; py<sourceTile.height(); ++py) {
+                const int sy=std::clamp(y+py-1,0,input.height()-1);
+                auto *dst=sourceTile.scanLine(py);
+                for (int px=0; px<sourceTile.width(); ++px) {
+                    const int sx=(x+px-1+input.width())%input.width();
+                    std::memcpy(dst+px*4,input.constScanLine(sy)+sx*4,4);
+                }
+            }
+            QImage maskTile(tileWidth + 2, tileHeight + 2, QImage::Format_Grayscale8);
+            if (useMask) {
+                for(int py=0;py<maskTile.height();++py){
+                    const int sy=std::clamp(y+py-1,0,input.height()-1);
+                    auto *dst=maskTile.scanLine(py);
+                    const auto *src=maskImage.constScanLine(sy);
+                    for(int px=0;px<maskTile.width();++px)
+                        dst[px]=src[(x+px-1+input.width())%input.width()];
+                }
+            }
             if (!useMask) maskTile.fill(255);
+            program.setUniformValue("uHdrLocal", QVector4D(grade.hdrStrength, grade.localContrast, grade.detailStrength, float(tileWidth)/float(tileWidth+2)));
+            program.setUniformValue("uSourceUvOffset", QVector2D(1.0f/float(tileWidth+2),1.0f/float(tileHeight+2)));
 
             if (!uploadTexture(&gl, &sourceTexture, sourceTile, GL_RGBA8, GL_RGBA)) {
                 cleanup();
@@ -238,7 +280,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
             const GLenum drawError = gl.glGetError();
             QImage tileResult;
             if (drawError == GL_NO_ERROR)
-                tileResult = fbo.toImage(true).convertToFormat(QImage::Format_RGBA8888);
+                tileResult = fbo.toImage(true).copy(0,0,tileWidth,tileHeight).convertToFormat(QImage::Format_RGBA8888);
             fbo.release();
             if (drawError != GL_NO_ERROR || tileResult.size() != rect.size()) {
                 cleanup();
