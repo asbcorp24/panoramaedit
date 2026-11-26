@@ -1759,16 +1759,38 @@ void SphereView::panoramaAutoCorrection(){
     preview();
     int decision=dialog.exec();updateParams();panoramaCorrectionPreview_=false;
     if(decision==QDialog::Accepted){
-        QImage result(original.size(),QImage::Format_RGBA8888);
-        for(int y=0;y<h;++y)for(int x=0;x<w;++x){
-            auto c=original.pixelColor(x,y);float u=(x+.5f)/w,sector=u*16;
-            int k=int(sector)%16;float f=sector-k;
-            float illum=panoramaCorrection_[3+k]*(1-f)+panoramaCorrection_[3+(k+1)%16]*f;
-            float edge=std::max(0.f,1.f-float(std::min(u,1-u))/.035f);
-            float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
-            for(int ch=0;ch<3;++ch)rgb[ch]=std::clamp(rgb[ch]*panoramaCorrection_[ch]*illum+panoramaCorrection_[20+ch]*edge,0.f,1.f);
-            result.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
-        }
+        QImage result;
+        GpuImageProcessor::GpuImageProcessor::Grade grade;
+        grade.panoramaAutoCorrection=true;
+        grade.whiteBalance[0]=panoramaCorrection_[0];
+        grade.whiteBalance[1]=panoramaCorrection_[1];
+        grade.whiteBalance[2]=panoramaCorrection_[2];
+        for(int k=0;k<16;++k)grade.sectorIllumination[k]=panoramaCorrection_[3+k];
+        grade.seamDelta[0]=panoramaCorrection_[20];
+        grade.seamDelta[1]=panoramaCorrection_[21];
+        grade.seamDelta[2]=panoramaCorrection_[22];
+        grade.seamWidth=panoramaCorrection_[19];
+        QString gpuError;
+        bool gpuApplied=false;
+        if(context()&&isValid()){
+            makeCurrent();
+            gpuApplied=GpuImageProcessor::GpuImageProcessor::applyGrade(
+                original,QImage(),false,grade,&result,&gpuError,2048);
+            doneCurrent();
+        }else gpuError=tr("OpenGL-контекст недоступен.");
+        if(!gpuApplied){
+            result=QImage(original.size(),QImage::Format_RGBA8888);
+            for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+                auto c=original.pixelColor(x,y);float u=(x+.5f)/w,sector=u*16;
+                int k=int(sector)%16;float f=sector-k;
+                float illum=panoramaCorrection_[3+k]*(1-f)+panoramaCorrection_[3+(k+1)%16]*f;
+                float edge=std::max(0.f,1.f-float(std::min(u,1-u))/.035f);
+                float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
+                for(int ch=0;ch<3;++ch)rgb[ch]=std::clamp(rgb[ch]*panoramaCorrection_[ch]*illum+panoramaCorrection_[20+ch]*edge,0.f,1.f);
+                result.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
+            }
+            emit statusMessage(tr("Автокоррекция панорамы: CPU-режим (%1)").arg(gpuError));
+        }else emit statusMessage(tr("Автокоррекция панорамы обработана на GPU тайлами."));
         if(result!=original){pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
     }
     update();
