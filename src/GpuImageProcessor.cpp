@@ -90,8 +90,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
         return fail(QStringLiteral("Требуется OpenGL 3.3 или новее."));
 
     QOpenGLFunctions_3_3_Core gl;
-    if (!gl.initializeOpenGLFunctions())
-        return fail(QStringLiteral("Не удалось инициализировать OpenGL 3.3."));
+    gl.initializeOpenGLFunctions();
 
     QOpenGLShaderProgram program;
     if (!program.addShaderFromSourceCode(QOpenGLShader::Vertex, vertexShader) ||
