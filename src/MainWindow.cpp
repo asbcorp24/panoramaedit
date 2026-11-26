@@ -172,6 +172,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *gradient = new QPushButton(tr("Сферический градиент"), panel);
+    gradient->setToolTip(tr("Плавно осветлить, затемнить или изменить оттенок выбранной области сферы"));
+    panelLayout->addWidget(gradient);
+    connect(gradient, &QPushButton::clicked, view_, &SphereView::sphericalGradient);
+
     auto *panoramaAuto = new QPushButton(tr("Автокоррекция панорамы"), panel);
     panoramaAuto->setToolTip(tr("Автобаланс освещения, выравнивание цвета шва и автоматический баланс белого"));
     panelLayout->addWidget(panoramaAuto);
