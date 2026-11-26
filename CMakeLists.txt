@@ -92,6 +92,8 @@ qt_add_executable(PanoramaEdit WIN32
     src/SphericalAI.cpp
     src/SphericalRaster.h
     src/SphericalRaster.cpp
+    src/GpuImageProcessor.h
+    src/GpuImageProcessor.cpp
 )
 target_link_libraries(PanoramaEdit PRIVATE Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)
 target_link_libraries(PanoramaEdit PRIVATE webp)
@@ -119,6 +121,8 @@ if(BUILD_TESTING)
         src/SphericalAI.cpp
         src/SphericalRaster.h
         src/SphericalRaster.cpp
+        src/GpuImageProcessor.h
+        src/GpuImageProcessor.cpp
     )
     target_link_libraries(PanoramaEditAITests PRIVATE Qt6::Gui)
     add_test(NAME SphericalAI COMMAND PanoramaEditAITests)
