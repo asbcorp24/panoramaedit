@@ -256,7 +256,7 @@ uniform vec3 uGradientCenter;
 uniform vec4 uGradientParams;
 uniform bool uPanoramaCorrection;
 uniform float uPanoramaCorrectionValues[28];
-uniform float uGrade[12];
+uniform float uGrade[14];
 uniform bool uLevelPreview;
 uniform bool uPoleStretchPreview;
 uniform float uPoleStretch;
@@ -319,6 +319,16 @@ void main() {
         z=(z-0.5)*(1.0+uGrade[4])+0.5+uGrade[3]*0.25;
         z+=vec3(uGrade[7],uGrade[8],uGrade[9])*0.2+uGrade[6]*0.12*vec3(1,0,-1);
         z+=uGrade[10]*0.35*(1.0-l)*(1.0-l)+uGrade[11]*0.35*l*l;
+        float hdr=clamp(uGrade[12],0.0,1.0);
+        float hdrLum=dot(z,vec3(0.2126,0.7152,0.0722));
+        float compressed=hdrLum/(1.0+hdr*hdrLum*1.5);
+        z=mix(z,z*(compressed/max(0.001,hdrLum))+vec3(hdr*0.06),hdr);
+        vec2 px=vec2(1.0/2048.0,1.0/1024.0);
+        float local=0.25*(dot(texture(uPanorama,vec2(u+px.x,v)).rgb,vec3(0.2126,0.7152,0.0722))
+            +dot(texture(uPanorama,vec2(u-px.x,v)).rgb,vec3(0.2126,0.7152,0.0722))
+            +dot(texture(uPanorama,vec2(u,v+px.y)).rgb,vec3(0.2126,0.7152,0.0722))
+            +dot(texture(uPanorama,vec2(u,v-px.y)).rgb,vec3(0.2126,0.7152,0.0722)));
+        z+=vec3((dot(rgb,vec3(0.2126,0.7152,0.0722))-local)*uGrade[13]*2.0);
         fragColor.rgb=mix(rgb,clamp(z,0.0,1.0),uGradingMasked?texture(uMask,vec2(u,v)).r:1.0);
     }
     if (uColorPreview) {
@@ -487,7 +497,7 @@ void SphereView::paintGL() {
     shader_->setUniformValue("uGradientParams",QVector4D(gradientInner_,gradientOuter_,gradientStrength_,gradientWarmth_));
     shader_->setUniformValueArray("uPanoramaCorrectionValues",panoramaCorrection_,28,1);
     shader_->setUniformValue("uGradingMasked",gradingMasked_);
-    shader_->setUniformValueArray("uGrade",grading_,12,1);
+    shader_->setUniformValueArray("uGrade",grading_,14,1);
     shader_->setUniformValue("uLevelPreview",levelPreview_);
     shader_->setUniformValue("uPoleStretchPreview",poleStretchPreview_);
     shader_->setUniformValue("uPoleStretch",poleStretch_);
