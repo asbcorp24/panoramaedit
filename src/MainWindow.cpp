@@ -17,6 +17,10 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenuBar>
+#include <QMenu>
+#include <QGroupBox>
+#include <QFormLayout>
+#include <functional>
 #include <QMessageBox>
 #include <QPalette>
 #include <QProgressDialog>
@@ -56,30 +60,33 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     redo->setShortcut(QKeySequence("Ctrl+Y"));
     connect(redo, &QAction::triggered, view_, &SphereView::redo);
 
-    // A dockable palette can be dragged around the desktop, attached to either
-    // side of the viewport, or reopened from the View menu after being closed.
+    // Compact primary-tool palette. Secondary and occasional commands live in menus.
     auto *toolsDock = new QDockWidget(tr("Инструменты"), this);
     toolsDock->setObjectName("ToolsPalette");
     toolsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     toolsDock->setFeatures(QDockWidget::DockWidgetMovable |
                            QDockWidget::DockWidgetFloatable |
                            QDockWidget::DockWidgetClosable);
+
     auto *panel = new QWidget(toolsDock);
+    panel->setMinimumWidth(226);
+    panel->setMaximumWidth(270);
     auto *panelLayout = new QVBoxLayout(panel);
-    panelLayout->setContentsMargins(10, 10, 10, 10);
-    panelLayout->setSpacing(8);
+    panelLayout->setContentsMargins(6, 6, 6, 6);
+    panelLayout->setSpacing(5);
+
     auto *buttons = new QGridLayout();
-    buttons->setHorizontalSpacing(6);
-    buttons->setVerticalSpacing(6);
-    buttons->setAlignment(Qt::AlignLeft);
+    buttons->setHorizontalSpacing(4);
+    buttons->setVerticalSpacing(4);
+    buttons->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     panelLayout->addLayout(buttons);
 
     const bool darkPalette = panel->palette().color(QPalette::Window).lightness() < 128;
     const QString hoverColor = darkPalette ? "#284c66" : "#d7ecfc";
     const QString checkedColor = darkPalette ? "#1c527a" : "#afdbfa";
     const QString iconButtonStyle = QString(
-        "QToolButton { border: 1px solid palette(mid); border-radius: 7px; "
-        "background: palette(button); padding: 4px; }"
+        "QToolButton { border: 1px solid palette(mid); border-radius: 6px; "
+        "background: palette(button); padding: 2px; }"
         "QToolButton:hover { background: %1; border-color: #348ec5; }"
         "QToolButton:checked { background: %2; border: 2px solid #167db8; }"
         "QToolButton:pressed { background: %1; }").arg(hoverColor, checkedColor);
@@ -91,18 +98,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         auto *action = new QAction(name, this);
         action->setCheckable(true);
         action->setIcon(ToolIcons::make(icon));
-        const QString tooltip = tr("%1 (%2)\n%3").arg(name, shortcut, hint);
+        const QString tooltip = shortcut.isEmpty()
+            ? name + "\\n" + hint : tr("%1 (%2)\\n%3").arg(name, shortcut, hint);
         action->setToolTip(tooltip);
         action->setStatusTip(hint);
-        action->setShortcut(QKeySequence(shortcut));
+        if (!shortcut.isEmpty()) action->setShortcut(QKeySequence(shortcut));
         action->setShortcutContext(Qt::ApplicationShortcut);
         group->addAction(action);
         addAction(action);
         auto *button = new QToolButton(panel);
         button->setDefaultAction(action);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        button->setIconSize(QSize(29, 29));
-        button->setFixedSize(48, 46);
+        button->setIconSize(QSize(24, 24));
+        button->setFixedSize(39, 38);
         button->setStyleSheet(iconButtonStyle);
         button->setToolTip(tooltip);
         button->setAccessibleName(name);
@@ -112,170 +120,89 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         return action;
     };
 
-    navigateAction_ = addTool(tr("Навигация"), tr("Поворачивать сферу"),
-                              "N", SphereView::Mode::Navigate, ToolIcons::Kind::Navigate, 0, 0);
-    brushAction_ = addTool(tr("Кисть"), tr("Рисовать непосредственно на сфере"),
-                           "B", SphereView::Mode::Brush, ToolIcons::Kind::Brush, 0, 1);
-    eraserAction_ = addTool(tr("Ластик"), tr("Стереть внесённые изменения"),
-                            "E", SphereView::Mode::Eraser, ToolIcons::Kind::Eraser, 0, 2);
-    stampAction_ = addTool(tr("Штамп"), tr("Ctrl + щелчок: выбрать образец для копирования"),
-                           "S", SphereView::Mode::CloneStamp, ToolIcons::Kind::Stamp, 0, 3);
+    navigateAction_ = addTool(tr("Навигация"), tr("Поворачивать сферу"), "N",
+        SphereView::Mode::Navigate, ToolIcons::Kind::Navigate, 0, 0);
+    brushAction_ = addTool(tr("Кисть"), tr("Рисовать непосредственно на сфере"), "B",
+        SphereView::Mode::Brush, ToolIcons::Kind::Brush, 0, 1);
+    eraserAction_ = addTool(tr("Ластик"), tr("Стереть внесённые изменения"), "E",
+        SphereView::Mode::Eraser, ToolIcons::Kind::Eraser, 0, 2);
+    stampAction_ = addTool(tr("Штамп"), tr("Ctrl + щелчок: выбрать образец для копирования"), "S",
+        SphereView::Mode::CloneStamp, ToolIcons::Kind::Stamp, 0, 3);
     navigateAction_->setChecked(true);
-    addTool(tr("Палец"), tr("Размазывать пиксели кистью"),
-            "F", SphereView::Mode::Smudge, ToolIcons::Kind::Smudge, 0, 4);
-    addTool(tr("Деформация"), tr("Тянуть изображение вслед за курсором"),
-            "D", SphereView::Mode::Push, ToolIcons::Kind::Push, 1, 0);
-    addTool(tr("Вздутие"), tr("Расширить область под кистью"),
-            "I", SphereView::Mode::Bloat, ToolIcons::Kind::Bloat, 1, 1);
-    addTool(tr("Сжатие"), tr("Сжать область к центру кисти"),
-            "C", SphereView::Mode::Pinch, ToolIcons::Kind::Pinch, 1, 2);
-    addTool(tr("ИИ-резкость"), tr("Выделите размытую область для улучшения"),
-            "U", SphereView::Mode::AiSharpen, ToolIcons::Kind::Sharpen, 1, 3);
-    addTool(tr("ИИ-дорисовка"), tr("Выделите участок, который нужно заполнить фоном"),
-            "J", SphereView::Mode::AiInpaint, ToolIcons::Kind::Inpaint, 1, 4);
+    addTool(tr("Палец"), tr("Размазывать пиксели кистью"), "F",
+        SphereView::Mode::Smudge, ToolIcons::Kind::Smudge, 0, 4);
+    addTool(tr("Деформация"), tr("Тянуть изображение вслед за курсором"), "D",
+        SphereView::Mode::Push, ToolIcons::Kind::Push, 1, 0);
+    addTool(tr("Вздутие"), tr("Расширить область под кистью"), "I",
+        SphereView::Mode::Bloat, ToolIcons::Kind::Bloat, 1, 1);
+    addTool(tr("Сжатие"), tr("Сжать область к центру кисти"), "C",
+        SphereView::Mode::Pinch, ToolIcons::Kind::Pinch, 1, 2);
+    addTool(tr("ИИ-резкость"), tr("Выделите размытую область для улучшения"), "U",
+        SphereView::Mode::AiSharpen, ToolIcons::Kind::Sharpen, 1, 3);
+    addTool(tr("ИИ-дорисовка"), tr("Выделите участок для восстановления фона"), "J",
+        SphereView::Mode::AiInpaint, ToolIcons::Kind::Inpaint, 1, 4);
+    addTool(tr("Округление"), tr("Выберите центр и точки контура объекта"), "R",
+        SphereView::Mode::RoundObject, ToolIcons::Kind::Bloat, 2, 0);
+    addTool(tr("Сетка"), tr("Выберите центр и перемещайте узлы сетки"), "M",
+        SphereView::Mode::MeshWarp, ToolIcons::Kind::Push, 2, 1);
+    addTool(tr("Выпрямление"), tr("Отметьте точки вдоль искривлённой линии"), "L",
+        SphereView::Mode::Straighten, ToolIcons::Kind::Push, 2, 2);
+    addTool(tr("Умное выделение"), tr("Щелчок по объекту; Shift добавить, Alt исключить"), "K",
+        SphereView::Mode::SmartSelect, ToolIcons::Kind::Sharpen, 2, 3);
 
-    addTool(tr("Округление"), tr("Щёлкните центр и точки по контуру объекта, затем нажмите кнопку применения"), "R", SphereView::Mode::RoundObject, ToolIcons::Kind::Bloat, 3, 0);
-    addTool(tr("Сетка"), tr("Выберите центр и перемещайте внутренние узлы"), "M", SphereView::Mode::MeshWarp, ToolIcons::Kind::Push, 4, 0);
-    addTool(tr("Выпрямление"), tr("Отметьте точки вдоль искривлённой линии"), "L", SphereView::Mode::Straighten, ToolIcons::Kind::Push, 4, 1);
-    addTool(tr("Умное выделение"), tr("Щелчок по объекту; Shift добавить, Alt исключить"), "K", SphereView::Mode::SmartSelect, ToolIcons::Kind::Sharpen, 4, 2);
-    const auto styleActionButton = [buttons](QPushButton *button, ToolIcons::Kind icon,
-                                             const QString &name, const QString &hint,
-                                             int column) {
+    const auto addIconButton = [buttons, panel](QPushButton *button, ToolIcons::Kind icon,
+            const QString &name, const QString &hint, int row, int column) {
         button->setText({});
         button->setIcon(ToolIcons::make(icon));
-        button->setIconSize(QSize(29, 29));
-        button->setFixedSize(48, 46);
+        button->setIconSize(QSize(23, 23));
+        button->setFixedSize(39, 38);
         button->setAccessibleName(name);
         button->setAccessibleDescription(hint);
-        button->setToolTip(name + "\n" + hint);
-        buttons->addWidget(button, 2, column);
+        button->setToolTip(name + "\\n" + hint);
+        buttons->addWidget(button, row, column);
     };
 
     auto *color = new QPushButton(panel);
-    styleActionButton(color, ToolIcons::Kind::Color, tr("Цвет кисти"),
-                      tr("Выбрать цвет рисования"), 0);
+    addIconButton(color, ToolIcons::Kind::Color, tr("Цвет кисти"),
+                  tr("Выбрать цвет рисования"), 3, 0);
     connect(color, &QPushButton::clicked, this, [this] {
         const QColor chosen = QColorDialog::getColor(Qt::red, this, tr("Цвет кисти"));
         if (chosen.isValid()) view_->setBrushColor(chosen);
     });
     applyAiButton_ = new QPushButton(panel);
-    styleActionButton(applyAiButton_, ToolIcons::Kind::ApplyAi,
-                      tr("Применить ИИ к выделению"),
-                      tr("Обработать выделенный участок локальной нейросетью"), 1);
+    addIconButton(applyAiButton_, ToolIcons::Kind::ApplyAi, tr("Применить ИИ"),
+                  tr("Обработать выделенную область локальной нейросетью"), 3, 1);
     connect(applyAiButton_, &QPushButton::clicked, this, &MainWindow::startAiRestoration);
     auto *clearAi = new QPushButton(panel);
-    styleActionButton(clearAi, ToolIcons::Kind::ClearAi,
-                      tr("Очистить ИИ-выделение"), tr("Убрать маску выделения"), 2);
+    addIconButton(clearAi, ToolIcons::Kind::ClearAi, tr("Снять выделение"),
+                  tr("Убрать маску ИИ-выделения"), 3, 2);
     connect(clearAi, &QPushButton::clicked, view_, &SphereView::clearAiSelection);
     auto *seam = new QPushButton(panel);
-    styleActionButton(seam, ToolIcons::Kind::Seam, tr("Сгладить шов 0°/360°"),
-                      tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
+    addIconButton(seam, ToolIcons::Kind::Seam, tr("Сгладить шов"),
+                  tr("Мягко свести левый и правый края"), 3, 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
-    auto *gradient = new QPushButton(tr("Сферический градиент"), panel);
-    gradient->setToolTip(tr("Плавно осветлить, затемнить или изменить оттенок выбранной области сферы"));
-    panelLayout->addWidget(gradient);
-    connect(gradient, &QPushButton::clicked, view_, &SphereView::sphericalGradient);
-
-    auto *panoramaAuto = new QPushButton(tr("Автокоррекция панорамы"), panel);
-    panoramaAuto->setToolTip(tr("Автобаланс освещения, выравнивание цвета шва и автоматический баланс белого"));
-    panelLayout->addWidget(panoramaAuto);
-    connect(panoramaAuto, &QPushButton::clicked, view_, &SphereView::panoramaAutoCorrection);
-
-    auto *grading = new QPushButton(tr("Цветокоррекция / уровни"), panel);
-    panelLayout->addWidget(grading);
-    connect(grading, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->colorGrading();});
-    auto *localColor = new QPushButton(tr("Локальная цветокоррекция"), panel);
-    panelLayout->addWidget(localColor);
-    connect(localColor, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->localColorCorrection();});
-    auto *objectSelect = new QPushButton(tr("Выбрать объект (ИИ)"), panel);
-    auto *objectRemove = new QPushButton(tr("Удалить выбранный объект"), panel);
-    panelLayout->addWidget(objectSelect);
-    panelLayout->addWidget(objectRemove);
-    connect(objectSelect, &QPushButton::clicked, this, [this]{view_->clearAiSelection();view_->setMode(SphereView::Mode::SmartSelect);});
-    connect(objectRemove, &QPushButton::clicked, this, [this]{
-        if(aiWatcher_)return;
-        if(!view_->prepareObjectRemoval()){
-            QMessageBox::information(this,tr("Удаление объекта"),tr("Сначала выберите объект и дождитесь появления маски."));return;
-        }
-        startAiRestoration();
-    });
-    auto *poleStretch = new QPushButton(tr("Натяжение текстуры от полюса"), panel);
-    panelLayout->addWidget(poleStretch);
-    connect(poleStretch, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->stretchPoleTexture();});
-    auto *manualLevel = new QPushButton(tr("Ручное выравнивание сферы"), panel);
-    panelLayout->addWidget(manualLevel);
-    connect(manualLevel, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->manualLevelHorizon();});
-    auto *levelHorizon = new QPushButton(tr("Автовыравнивание горизонта"), panel);
-    panelLayout->addWidget(levelHorizon);
-    connect(levelHorizon, &QPushButton::clicked, view_, &SphereView::autoLevelHorizon);
-    auto *diagnostics = new QPushButton(tr("Диагностика панорамы"), panel);
-    panelLayout->addWidget(diagnostics);
-    auto *clearDiagnostics = new QPushButton(tr("Скрыть дефекты"), panel);
-    panelLayout->addWidget(clearDiagnostics);
-    connect(clearDiagnostics, &QPushButton::clicked, view_, &SphereView::clearDiagnostics);
-    connect(diagnostics, &QPushButton::clicked, view_, &SphereView::diagnosePanorama);
-    auto *smartSeam = new QPushButton(tr("Умный шов"), panel);
-    auto *seamView = new QPushButton(tr("Показать шов"), panel);
-    auto *seamAi = new QPushButton(tr("ИИ-дорисовка шва"), panel);
-    panelLayout->addWidget(smartSeam);
-    panelLayout->addWidget(seamView);
-    panelLayout->addWidget(seamAi);
-    connect(smartSeam, &QPushButton::clicked, view_, &SphereView::previewSeam);
-    connect(seamView, &QPushButton::clicked, view_, &SphereView::showSeam);
-    connect(seamAi, &QPushButton::clicked, this, [this]{view_->selectSeamForAi();startAiRestoration();});
-    auto *roundSelection = new QPushButton(tr("Округление по выделению"), panel);
-    panelLayout->addWidget(roundSelection);
-    connect(roundSelection, &QPushButton::clicked, view_, &SphereView::roundFromSelection);
-    auto *roundApply = new QPushButton(panel);
-    roundApply->setIcon(ToolIcons::make(ToolIcons::Kind::ApplyAi));
-    roundApply->setToolTip(tr("Применить округление объекта"));
-    roundApply->setAccessibleName(tr("Применить округление"));
-    roundApply->setFixedSize(48,46);
-    buttons->addWidget(roundApply,3,1);
-    connect(roundApply, &QPushButton::clicked, view_, &SphereView::roundObject);
-    auto *poleRow = new QHBoxLayout();
-    auto *zenith = new QPushButton(tr("Зенит"), panel);
-    auto *nadir = new QPushButton(tr("Надир"), panel);
-    auto *horizon = new QPushButton(tr("Обычный вид"), panel);
-    poleRow->addWidget(zenith); poleRow->addWidget(nadir); poleRow->addWidget(horizon);
-    panelLayout->addLayout(poleRow);
-    connect(zenith, &QPushButton::clicked, view_, &SphereView::showZenith);
-    connect(nadir, &QPushButton::clicked, view_, &SphereView::showNadir);
-    connect(horizon, &QPushButton::clicked, view_, &SphereView::showHorizon);
-    auto *poleRepair = new QPushButton(tr("Сгладить полюс"), panel);
-    panelLayout->addWidget(poleRepair);
-    connect(poleRepair, &QPushButton::clicked, view_, &SphereView::repairPole);
-    auto *lineApply = new QPushButton(tr("Выпрямить линию"), panel);
-    auto *lineReset = new QPushButton(tr("Сбросить линию"), panel);
-    panelLayout->addWidget(lineApply);
-    panelLayout->addWidget(lineReset);
-    connect(lineApply, &QPushButton::clicked, view_, &SphereView::straightenLine);
-    connect(lineReset, &QPushButton::clicked, view_, &SphereView::resetLine);
-    auto *meshApply = new QPushButton(tr("Применить сетку"), panel);
-    auto *meshReset = new QPushButton(tr("Сбросить сетку"), panel);
-    panelLayout->addWidget(meshApply);
-    panelLayout->addWidget(meshReset);
-    connect(meshApply, &QPushButton::clicked, view_, &SphereView::applyMesh);
-    connect(meshReset, &QPushButton::clicked, view_, &SphereView::resetMesh);
-    panelLayout->addWidget(new QLabel(tr("Радиус кисти (градусы):"), panel));
-    auto *radiusRow = new QHBoxLayout();
-    auto *radius = new QSlider(Qt::Horizontal, panel);
+    auto *settingsGroup = new QGroupBox(tr("Кисть и воздействие"), panel);
+    auto *settingsLayout = new QGridLayout(settingsGroup);
+    settingsLayout->setContentsMargins(7, 7, 7, 7);
+    settingsLayout->setHorizontalSpacing(5);
+    settingsLayout->setVerticalSpacing(3);
+    auto *radiusLabel = new QLabel(tr("Радиус"), settingsGroup);
+    auto *radius = new QSlider(Qt::Horizontal, settingsGroup);
     radius->setRange(1, 300);
     radius->setValue(20);
-    radius->setToolTip(tr("Ползунок радиуса: от 0,1° до 30°"));
-    auto *radiusInput = new QDoubleSpinBox(panel);
+    radius->setToolTip(tr("Радиус кисти от 0,1° до 30°"));
+    auto *radiusInput = new QDoubleSpinBox(settingsGroup);
     radiusInput->setDecimals(1);
     radiusInput->setRange(0.1, 30.0);
     radiusInput->setSingleStep(0.5);
     radiusInput->setValue(2.0);
-    radiusInput->setSuffix(tr(" °"));
+    radiusInput->setSuffix(tr("°"));
     radiusInput->setKeyboardTracking(false);
-    radiusInput->setToolTip(tr("Введите радиус вручную и нажмите Enter"));
-    radiusInput->setFixedWidth(90);
-    radiusRow->addWidget(radius, 1);
-    radiusRow->addWidget(radiusInput);
-    panelLayout->addLayout(radiusRow);
+    radiusInput->setFixedWidth(66);
+    settingsLayout->addWidget(radiusLabel, 0, 0);
+    settingsLayout->addWidget(radius, 0, 1);
+    settingsLayout->addWidget(radiusInput, 0, 2);
     connect(radius, &QSlider::valueChanged, this, [this, radiusInput](int v) {
         const QSignalBlocker block(radiusInput);
         radiusInput->setValue(v / 10.0);
@@ -288,31 +215,143 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         view_->setBrushRadius(v);
     });
 
-    auto *strengthTitle = new QLabel(tr("Сила воздействия: 50%"), panel);
-    panelLayout->addWidget(strengthTitle);
-    auto *strength = new QSlider(Qt::Horizontal, panel);
+    auto *strengthLabel = new QLabel(tr("Сила"), settingsGroup);
+    auto *strength = new QSlider(Qt::Horizontal, settingsGroup);
     strength->setRange(1, 100);
     strength->setValue(50);
-    strength->setToolTip(tr("Сила инструментов пластики: от 1% до 100%"));
-    connect(strength, &QSlider::valueChanged, this, [this, strengthTitle](int v) {
-        strengthTitle->setText(tr("Сила воздействия: %1%").arg(v));
+    strength->setToolTip(tr("Сила воздействия инструментов пластики"));
+    auto *strengthValue = new QLabel(tr("50%"), settingsGroup);
+    strengthValue->setMinimumWidth(34);
+    settingsLayout->addWidget(strengthLabel, 1, 0);
+    settingsLayout->addWidget(strength, 1, 1);
+    settingsLayout->addWidget(strengthValue, 1, 2);
+    connect(strength, &QSlider::valueChanged, this, [this, strengthValue](int v) {
+        strengthValue->setText(tr("%1%").arg(v));
         view_->setToolStrength(v / 100.0);
     });
-    panelLayout->addWidget(strength);
+    panelLayout->addWidget(settingsGroup);
+    panelLayout->addStretch(1);
 
     toolsDock->setWidget(panel);
     addDockWidget(Qt::RightDockWidgetArea, toolsDock);
-    toolsDock->setFloating(true);
+    toolsDock->setMinimumWidth(242);
+    toolsDock->setMaximumWidth(286);
+
     auto *viewMenu = menuBar()->addMenu(tr("&Вид"));
     auto *toggleTools = toolsDock->toggleViewAction();
     toggleTools->setText(tr("Панель инструментов"));
     viewMenu->addAction(toggleTools);
-    // Set the initial position after the main window has been laid out.
-    QTimer::singleShot(0, this, [this, toolsDock] {
-        toolsDock->resize(300, toolsDock->sizeHint().height());
-        toolsDock->move(mapToGlobal(QPoint(width() - 320, 65)));
-    });
 
+    const auto addMenuAction = [this](QMenu *menu, const QString &name,
+            const QString &hint, const std::function<void()> &callback,
+            ToolIcons::Kind icon = ToolIcons::Kind::Navigate) {
+        auto *action = menu->addAction(ToolIcons::make(icon), name);
+        action->setStatusTip(hint);
+        action->setToolTip(hint);
+        connect(action, &QAction::triggered, this, callback);
+        return action;
+    };
+
+    auto *correctionMenu = menuBar()->addMenu(tr("&Коррекция"));
+    addMenuAction(correctionMenu, tr("Цветокоррекция и уровни"),
+        tr("Цветовые каналы, яркость, контраст и тон"), [this] {
+            if (!aiWatcher_) view_->colorGrading();
+        }, ToolIcons::Kind::Color);
+    addMenuAction(correctionMenu, tr("Локальная цветокоррекция"),
+        tr("Коррекция выбранного объекта или области"), [this] {
+            if (!aiWatcher_) view_->localColorCorrection();
+        }, ToolIcons::Kind::Color);
+    addMenuAction(correctionMenu, tr("Автокоррекция панорамы"),
+        tr("Баланс освещения, цвета и шва"), [this] {
+            if (!aiWatcher_) view_->panoramaAutoCorrection();
+        }, ToolIcons::Kind::Color);
+    addMenuAction(correctionMenu, tr("Сферический градиент"),
+        tr("Плавная коррекция по сфере"), [this] {
+            if (!aiWatcher_) view_->sphericalGradient();
+        }, ToolIcons::Kind::Color);
+    correctionMenu->addSeparator();
+    addMenuAction(correctionMenu, tr("Диагностика панорамы"),
+        tr("Найти дефекты изображения"), [this] { view_->diagnosePanorama(); });
+    addMenuAction(correctionMenu, tr("Скрыть диагностику"),
+        tr("Убрать отображение найденных дефектов"), [this] { view_->clearDiagnostics(); });
+
+    auto *sphereMenu = menuBar()->addMenu(tr("&Сфера 360°"));
+    addMenuAction(sphereMenu, tr("Натяжение текстуры от полюса"),
+        tr("Переместить текстуру от зенита или надира"), [this] {
+            if (!aiWatcher_) view_->stretchPoleTexture();
+        });
+    addMenuAction(sphereMenu, tr("Ручное выравнивание сферы"),
+        tr("Сместить текстуру по сфере без вращения камеры"), [this] {
+            if (!aiWatcher_) view_->manualLevelHorizon();
+        });
+    addMenuAction(sphereMenu, tr("Автовыравнивание горизонта"),
+        tr("Автоматически определить и исправить наклон"), [this] {
+            view_->autoLevelHorizon();
+        });
+    sphereMenu->addSeparator();
+    addMenuAction(sphereMenu, tr("Показать зенит"), tr("Посмотреть верхнюю точку сферы"),
+        [this] { view_->showZenith(); });
+    addMenuAction(sphereMenu, tr("Показать надир"), tr("Посмотреть нижнюю точку сферы"),
+        [this] { view_->showNadir(); });
+    addMenuAction(sphereMenu, tr("Обычный вид"), tr("Вернуться к обычному обзору"),
+        [this] { view_->showHorizon(); });
+    addMenuAction(sphereMenu, tr("Сгладить полюс"), tr("Исправить растяжение текстуры у полюса"),
+        [this] { view_->repairPole(); });
+
+    auto *selectionMenu = menuBar()->addMenu(tr("&Выделение и объекты"));
+    addMenuAction(selectionMenu, tr("Выбрать объект (ИИ)"),
+        tr("Перейти к умному выделению объекта"), [this] {
+            view_->clearAiSelection();
+            view_->setMode(SphereView::Mode::SmartSelect);
+        }, ToolIcons::Kind::Sharpen);
+    addMenuAction(selectionMenu, tr("Удалить выбранный объект"),
+        tr("Восстановить фон на месте выбранного объекта"), [this] {
+            if (aiWatcher_) return;
+            if (!view_->prepareObjectRemoval()) {
+                QMessageBox::information(this, tr("Удаление объекта"),
+                    tr("Сначала выберите объект и дождитесь появления маски."));
+                return;
+            }
+            startAiRestoration();
+        }, ToolIcons::Kind::Inpaint);
+    addMenuAction(selectionMenu, tr("Округление по выделению"),
+        tr("Построить округлый объект по маске выделения"), [this] {
+            view_->roundFromSelection();
+        }, ToolIcons::Kind::Bloat);
+    addMenuAction(selectionMenu, tr("Применить округление"),
+        tr("Применить рассчитанную форму объекта"), [this] {
+            view_->roundObject();
+        }, ToolIcons::Kind::ApplyAi);
+    addMenuAction(selectionMenu, tr("Очистить ИИ-выделение"),
+        tr("Убрать маску выделения"), [this] {
+            view_->clearAiSelection();
+        }, ToolIcons::Kind::ClearAi);
+
+    auto *geometryMenu = menuBar()->addMenu(tr("&Геометрия"));
+    addMenuAction(geometryMenu, tr("Выпрямить линию"),
+        tr("Выпрямить отмеченную линию"), [this] { view_->straightenLine(); });
+    addMenuAction(geometryMenu, tr("Сбросить линию"),
+        tr("Отменить построение линии"), [this] { view_->resetLine(); });
+    geometryMenu->addSeparator();
+    addMenuAction(geometryMenu, tr("Применить сетку"),
+        tr("Применить деформацию по сетке"), [this] { view_->applyMesh(); });
+    addMenuAction(geometryMenu, tr("Сбросить сетку"),
+        tr("Отменить деформацию по сетке"), [this] { view_->resetMesh(); });
+    geometryMenu->addSeparator();
+    addMenuAction(geometryMenu, tr("Сгладить шов 0°/360°"),
+        tr("Свести левую и правую границы панорамы"), [this] { view_->smoothSeam(); },
+        ToolIcons::Kind::Seam);
+    addMenuAction(geometryMenu, tr("Умный шов — предпросмотр"),
+        tr("Проанализировать несовпадение краёв"), [this] { view_->previewSeam(); });
+    addMenuAction(geometryMenu, tr("Показать шов"),
+        tr("Показать область соединения краёв"), [this] { view_->showSeam(); });
+    addMenuAction(geometryMenu, tr("ИИ-дорисовка шва"),
+        tr("Выделить шов и восстановить его нейросетью"), [this] {
+            view_->selectSeamForAi();
+            startAiRestoration();
+        }, ToolIcons::Kind::Inpaint);
+
+    // Keep the palette docked by default; users can float or move it from the title bar.
     statusLabel_ = new QLabel(tr("Откройте панораму 360° для редактирования"), this);
     statusBar()->addPermanentWidget(statusLabel_);
     connect(view_, &SphereView::imageChanged, this, [this] {
