@@ -1607,15 +1607,18 @@ void SphereView::colorGrading(){
     preset->addItems({tr("Нейтральный"),tr("Естественный"),tr("HDR-стиль"),tr("Тёплый"),tr("Холодный"),tr("Кино"),tr("Зимний"),tr("Винтаж"),tr("Чёрно-белый")});
     layout->addRow(tr("Пресет"),preset);
     auto *hist=new QLabel(&dialog);hist->setMinimumSize(256,85);layout->addRow(hist);
-    QSlider *sl[14];
-    const QString names[]={tr("Чёрная точка"),tr("Белая точка"),tr("Гамма ×100"),tr("Яркость"),tr("Контраст"),tr("Насыщенность"),tr("Температура"),tr("Красный"),tr("Зелёный"),tr("Синий"),tr("Тени"),tr("Света"),tr("HDR — восстановление тонов"),tr("Локальный контраст")};
-    const int defaults[]={0,255,100,0,0,0,0,0,0,0,0,0,0,0};
-    for(int i=0;i<14;++i){
+    QSlider *sl[17];
+    const QString names[]={tr("Чёрная точка"),tr("Белая точка"),tr("Гамма ×100"),tr("Яркость"),tr("Контраст"),tr("Насыщенность"),tr("Температура"),tr("Красный"),tr("Зелёный"),tr("Синий"),tr("Тени"),tr("Света"),tr("HDR — восстановление тонов"),tr("Локальный контраст"),tr("Dehaze — удаление дымки"),tr("Clarity — объём и средние детали"),tr("Texture — мелкая фактура")};
+    const int defaults[]={0,255,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    for(int i=0;i<17;++i){
         sl[i]=new QSlider(Qt::Horizontal,&dialog);
         sl[i]->setRange(i<2?0:i==2?10:-100,i<2?255:i==2?300:100);
         sl[i]->setValue(defaults[i]);
         if(i==12)sl[i]->setToolTip(tr("Сжимает светлые тона и мягко поднимает детали в тенях."));
         if(i==13)sl[i]->setToolTip(tr("Усиливает локальные детали без сильного изменения общего контраста."));
+        if(i==14)sl[i]->setToolTip(tr("Убирает воздушную дымку и повышает видимость дальних объектов."));
+        if(i==15)sl[i]->setToolTip(tr("Подчёркивает объём и контраст средних деталей."));
+        if(i==16)sl[i]->setToolTip(tr("Усиливает мелкую фактуру поверхностей."));
         layout->addRow(names[i],sl[i]);
     }
     auto *autoButton=new QPushButton(tr("Автоуровни"),&dialog);layout->addRow(autoButton);
@@ -1648,6 +1651,9 @@ void SphereView::colorGrading(){
         for(int i=2;i<12;++i)grading_[i]=sl[i]->value()/100.f;
         grading_[12]=sl[12]->value()/100.f;
         grading_[13]=sl[13]->value()/100.f;
+        grading_[14]=sl[14]->value()/100.f;
+        grading_[15]=sl[15]->value()/100.f;
+        grading_[16]=sl[16]->value()/100.f;
         gradingMasked_=scope->isChecked();
     };
     auto render=[&]{
@@ -1715,6 +1721,9 @@ void SphereView::colorGrading(){
         gpuGrade.highlights=grading_[11];
         gpuGrade.hdrStrength=grading_[12];
         gpuGrade.localContrast=grading_[13];
+        gpuGrade.dehaze=grading_[14];
+        gpuGrade.clarity=grading_[15];
+        gpuGrade.texture=grading_[16];
         QString gpuError;
         bool gpuApplied=false;
         if(context() && isValid()){
@@ -1726,7 +1735,8 @@ void SphereView::colorGrading(){
         if(!gpuApplied){
             result=render();
             const float hdr=grading_[12],local=grading_[13];
-            if(hdr!=0.f||local!=0.f){
+            const float dehaze=grading_[14],clarity=grading_[15],texture=grading_[16];
+            if(hdr!=0.f||local!=0.f||dehaze!=0.f||clarity!=0.f||texture!=0.f){
                 for(int y=0;y<result.height();++y)for(int x=0;x<result.width();++x){
                     const float weight=gradingMasked_?mask.constScanLine(y)[x]/255.f:1.f;
                     if(weight<=0.f)continue;
@@ -1742,9 +1752,13 @@ void SphereView::colorGrading(){
                     }
                     const float hdrLum=lum/(1.f+std::max(0.f,hdr)*lum*1.5f);
                     const float scale=hdrLum/std::max(.001f,lum);
+                    const float detail=lum-localLum;
                     float out[3];
                     for(int k=0;k<3;++k){
-                        const float target=rgb[k]*(1.f+hdr*(scale-1.f))+hdr*.06f+(lum-localLum)*local*2.f;
+                        float target=rgb[k]*(1.f+hdr*(scale-1.f))+hdr*.06f+(lum-localLum)*local*2.f;
+                        target+=(rgb[k]-.5f)*dehaze*.55f-detail*dehaze*.35f;
+                        target+=detail*clarity*2.2f;
+                        target+=(rgb[k]-lum)*texture*.32f+detail*texture*1.4f;
                         out[k]=std::clamp(rgb[k]+weight*(std::clamp(target,0.f,1.f)-rgb[k]),0.f,1.f);
                     }
                     result.setPixelColor(x,y,QColor::fromRgbF(out[0],out[1],out[2],c.alphaF()));
