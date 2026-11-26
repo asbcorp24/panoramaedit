@@ -49,6 +49,7 @@ public:
     void manualLevelHorizon();
     void stretchPoleTexture();
     void localColorCorrection();
+    void colorGrading();
     void clearDiagnostics();
     void roundObject();
     void roundFromSelection();
@@ -124,6 +125,8 @@ private:
     QVector3D levelAnchor_;
     Q_SIGNAL void levelRotationChanged();
     QQuaternion levelRotation_;
+    bool gradingPreview_=false, gradingMasked_=false;
+    float grading_[12]={};
     bool colorPreview_=false;
     float colorValues_[6]={};
     bool fullTextureDirty_ = true;
