@@ -25,6 +25,15 @@ public:
         float blue = 0.0f;
         float shadows = 0.0f;
         float highlights = 0.0f;
+        bool sphericalGradient = false;
+        bool gradientByLatitude = false;
+        float gradientCenterX = 0.0f;
+        float gradientCenterY = 1.0f;
+        float gradientCenterZ = 0.0f;
+        float gradientInner = 0.15f;
+        float gradientOuter = 0.8f;
+        float gradientStrength = 0.0f;
+        float gradientWarmth = 0.0f;
     };
 
     static bool applyGrade(const QImage &source, const QImage &mask,
