@@ -43,10 +43,11 @@ uniform float uSeamWidth;
 uniform float uSectorIllumination[16];
 uniform vec4 uHdrLocal; // HDR strength, local contrast, detail, inner UV scale
 uniform vec2 uSourceUvOffset;
+uniform vec2 uSourceUvScale;
 const float PI = 3.14159265358979323846;
 void main() {
     vec2 globalUV = uTileRect.xy + vUV * uTileRect.zw;
-    vec2 sourceUV = uSourceUvOffset + vUV * uHdrLocal.w;
+    vec2 sourceUV = uSourceUvOffset + vUV * uSourceUvScale;
     vec4 original = texture(uSource, sourceUV);
     vec2 texel = 1.0 / vec2(textureSize(uSource, 0));
     float centerLum = dot(original.rgb, vec3(0.2126,0.7152,0.0722));
@@ -100,7 +101,7 @@ void main() {
                                    + (rgb - 0.5) * uGradientParams.z, 0.0, 1.0);
         z = mix(rgb, gradientColor, falloff);
     }
-    float amount = uUseMask ? texture(uMask, vUV).r : 1.0;
+    float amount = uUseMask ? texture(uMask, sourceUV).r : 1.0;
     outColor = vec4(mix(rgb, clamp(z, 0.0, 1.0), amount), original.a);
 }
 )";
@@ -220,6 +221,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
     program.setUniformValue("uHdrLocal", QVector4D(grade.hdrStrength,
         grade.localContrast, grade.detailStrength, 1.0f));
     program.setUniformValue("uSourceUvOffset", QVector2D(0.0f,0.0f));
+    program.setUniformValue("uSourceUvScale", QVector2D(1.0f,1.0f));
 
     for (int y = 0; y < input.height(); y += tileEdge) {
         const int tileHeight = std::min(tileEdge, input.height() - y);
@@ -247,8 +249,9 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
                 }
             }
             if (!useMask) maskTile.fill(255);
-            program.setUniformValue("uHdrLocal", QVector4D(grade.hdrStrength, grade.localContrast, grade.detailStrength, float(tileWidth)/float(tileWidth+2)));
+            program.setUniformValue("uHdrLocal", QVector4D(grade.hdrStrength, grade.localContrast, grade.detailStrength, 1.0f));
             program.setUniformValue("uSourceUvOffset", QVector2D(1.0f/float(tileWidth+2),1.0f/float(tileHeight+2)));
+            program.setUniformValue("uSourceUvScale", QVector2D(float(tileWidth)/float(tileWidth+2),float(tileHeight)/float(tileHeight+2)));
 
             if (!uploadTexture(&gl, &sourceTexture, sourceTile, GL_RGBA8, GL_RGBA)) {
                 cleanup();
