@@ -249,6 +249,8 @@ uniform sampler2D uMask;
 uniform bool uShowMask;
 uniform bool uColorPreview;
 uniform bool uGrading, uGradingMasked;
+uniform bool uPanoramaCorrection;
+uniform float uPanoramaCorrectionValues[28];
 uniform float uGrade[12];
 uniform bool uLevelPreview;
 uniform bool uPoleStretchPreview;
@@ -285,6 +287,16 @@ void main() {
     float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
     if(uPoleStretchPreview){v+=uPoleStretch;if(v<0.0 || v>1.0){fragColor=vec4(0.12,0.12,0.12,1);return;}}
     fragColor = texture(uPanorama, vec2(u, v));
+    if(uPanoramaCorrection){
+        vec3 rgb=fragColor.rgb;
+        float sector=fract(u)*16.0;
+        int si=int(floor(sector));
+        float illum=mix(uPanoramaCorrectionValues[3+si],uPanoramaCorrectionValues[3+((si+1)%16)],fract(sector));
+        vec3 corrected=rgb*vec3(uPanoramaCorrectionValues[0],uPanoramaCorrectionValues[1],uPanoramaCorrectionValues[2])*illum;
+        float edge=max(0.0,1.0-min(u,1.0-u)/max(0.0001,uPanoramaCorrectionValues[19]));
+        corrected+=vec3(uPanoramaCorrectionValues[20],uPanoramaCorrectionValues[21],uPanoramaCorrectionValues[22])*edge;
+        fragColor.rgb=clamp(corrected,0.0,1.0);
+    }
     if(uGrading){
         vec3 rgb=fragColor.rgb;
         vec3 z=pow(clamp((rgb-uGrade[0])/max(0.004,uGrade[1]-uGrade[0]),0.0,1.0),vec3(1.0/uGrade[2]));
@@ -454,6 +466,8 @@ void SphereView::paintGL() {
     shader_->setUniformValue("uMask", 1);
     shader_->setUniformValue("uColorPreview",colorPreview_);
     shader_->setUniformValue("uGrading",gradingPreview_);
+    shader_->setUniformValue("uPanoramaCorrection",panoramaCorrectionPreview_);
+    shader_->setUniformValueArray("uPanoramaCorrectionValues",panoramaCorrection_,28,1);
     shader_->setUniformValue("uGradingMasked",gradingMasked_);
     shader_->setUniformValueArray("uGrade",grading_,12,1);
     shader_->setUniformValue("uLevelPreview",levelPreview_);
@@ -1605,6 +1619,85 @@ void SphereView::colorGrading(){
     if(decision==QDialog::Accepted){
         QImage result=render();
         if(result!=original){pushUndo();editLayer_=result;composite_=result;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
+    }
+    update();
+}
+
+void SphereView::panoramaAutoCorrection(){
+    if(!hasImage()||gradingPreview_||levelPreview_||poleStretchPreview_)return;
+    const QImage original=composite_;
+    QDialog dialog(this);dialog.setWindowTitle(tr("Автокоррекция панорамы"));
+    auto *layout=new QFormLayout(&dialog);
+    auto *illumination=new QCheckBox(tr("Автобаланс освещения по секторам сферы"),&dialog);illumination->setChecked(true);
+    auto *seam=new QCheckBox(tr("Выравнивание цвета шва 0°/360°"),&dialog);seam->setChecked(true);
+    auto *white=new QCheckBox(tr("Автоматический баланс белого"),&dialog);white->setChecked(true);
+    auto *strength=new QSlider(Qt::Horizontal,&dialog);strength->setRange(0,100);strength->setValue(70);
+    layout->addRow(illumination);layout->addRow(seam);layout->addRow(white);layout->addRow(tr("Сила коррекции"),strength);
+    auto *before=new QCheckBox(tr("Показать оригинал"),&dialog);layout->addRow(before);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addRow(buttons);
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    const int w=original.width(),h=original.height();
+    double sectorSum[16]={},sectorWeight[16]={},rgbSum[3]={},edgeL[3]={},edgeR[3]={};
+    const int sx=std::max(1,w/2048),sy=std::max(1,h/512),edgeWidth=std::max(1,w/100);
+    for(int y=0;y<h;y+=sy)for(int x=0;x<w;x+=sx){
+        auto c=original.pixelColor(x,y);double area=std::sin(PI*(y+0.5)/h);
+        int k=std::min(15,x*16/w);double lum=.2126*c.redF()+.7152*c.greenF()+.0722*c.blueF();
+        sectorSum[k]+=lum*area;sectorWeight[k]+=area;
+        for(int ch=0;ch<3;++ch)rgbSum[ch]+=(ch==0?c.redF():ch==1?c.greenF():c.blueF())*area;
+        if(x<edgeWidth||x>=w-edgeWidth)for(int ch=0;ch<3;++ch){
+            double v=ch==0?c.redF():ch==1?c.greenF():c.blueF();
+            if(x<edgeWidth)edgeL[ch]+=v*area;else edgeR[ch]+=v*area;
+        }
+    }
+    double global=0,totalWeight=0;
+    for(int k=0;k<16;++k){global+=sectorSum[k];totalWeight+=sectorWeight[k];}
+    global/=std::max(1.0,totalWeight);
+    double avg=(rgbSum[0]+rgbSum[1]+rgbSum[2])/3.0;
+    float wb[3],seamDelta[3];
+    for(int ch=0;ch<3;++ch){
+        wb[ch]=float(std::clamp(avg/std::max(.03,rgbSum[ch]/std::max(1.0,totalWeight)),.75,1.33));
+        seamDelta[ch]=float(std::clamp((edgeL[ch]-edgeR[ch])/(2.0*std::max(1.0,edgeWidth*double(h)/sy)),-.12,.12));
+        panoramaCorrection_[ch]=1;
+        panoramaCorrection_[20+ch]=0;
+    }
+    for(int k=0;k<16;++k){
+        double mean=sectorSum[k]/std::max(1.0,sectorWeight[k]);
+        panoramaCorrection_[3+k]=float(std::clamp(global/std::max(.04,mean),.75,1.33));
+    }
+    panoramaCorrection_[19]=.035f;
+    auto updateParams=[&]{
+        float amount=strength->value()/100.f;
+        for(int ch=0;ch<3;++ch){
+            panoramaCorrection_[ch]=white->isChecked()?1+(wb[ch]-1)*amount:1;
+            panoramaCorrection_[20+ch]=seam->isChecked()?seamDelta[ch]*amount:0;
+        }
+        for(int k=0;k<16;++k)if(!illumination->isChecked())panoramaCorrection_[3+k]=1;
+        else panoramaCorrection_[3+k]=1+(float(std::clamp(global/std::max(.04,sectorSum[k]/std::max(1.0,sectorWeight[k])),.75,1.33))-1)*amount;
+        panoramaCorrectionPreview_=!before->isChecked();
+        update();
+    };
+    const bool gpu=isValid()&&shader_&&shader_->isLinked();
+    auto preview=[&]{updateParams();if(!gpu)emit statusMessage(tr("GPU-предпросмотр недоступен; используйте CPU-режим."));};
+    connect(illumination,&QCheckBox::toggled,&dialog,[&](bool){preview();});
+    connect(seam,&QCheckBox::toggled,&dialog,[&](bool){preview();});
+    connect(white,&QCheckBox::toggled,&dialog,[&](bool){preview();});
+    connect(strength,&QSlider::valueChanged,&dialog,[&](int){preview();});
+    connect(before,&QCheckBox::toggled,&dialog,[&](bool){preview();});
+    preview();
+    int decision=dialog.exec();updateParams();panoramaCorrectionPreview_=false;
+    if(decision==QDialog::Accepted){
+        QImage result(original.size(),QImage::Format_RGBA8888);
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x){
+            auto c=original.pixelColor(x,y);float u=(x+.5f)/w,sector=u*16;
+            int k=int(sector)%16;float f=sector-k;
+            float illum=panoramaCorrection_[3+k]*(1-f)+panoramaCorrection_[3+(k+1)%16]*f;
+            float edge=std::max(0.f,1.f-float(std::min(u,1-u))/.035f);
+            float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
+            for(int ch=0;ch<3;++ch)rgb[ch]=std::clamp(rgb[ch]*panoramaCorrection_[ch]*illum+panoramaCorrection_[20+ch]*edge,0.f,1.f);
+            result.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
+        }
+        if(result!=original){pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
     }
     update();
 }
