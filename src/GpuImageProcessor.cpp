@@ -156,7 +156,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
             const int tileWidth = std::min(tileEdge, input.width() - x);
             const QRect rect(x, y, tileWidth, tileHeight);
             const QImage sourceTile = input.copy(rect);
-            const QImage maskTile = useMask ? maskImage.copy(rect) : QImage(tileWidth, tileHeight, QImage::Format_Grayscale8);
+            QImage maskTile = useMask ? maskImage.copy(rect) : QImage(tileWidth, tileHeight, QImage::Format_Grayscale8);
             if (!useMask) maskTile.fill(255);
 
             if (!uploadTexture(&gl, &sourceTexture, sourceTile, GL_RGBA8, GL_RGBA)) {
