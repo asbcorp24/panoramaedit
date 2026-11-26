@@ -65,6 +65,7 @@ void SphereView::setMode(Mode mode) {
     mode_ = mode;
     if (mode == Mode::Straighten) emit statusMessage(tr("Отметьте минимум три точки линии по порядку, затем примените."));
     if (mode == Mode::MeshWarp) emit statusMessage(tr("Сетка: выберите центр, перетаскивайте внутренние узлы, затем примените."));
+    if (mode == Mode::SphericalWarp) emit statusMessage(tr("Сферическая пластика: зажмите участок и потяните его. Радиус задаёт область влияния."));
     roundCenter_.reset(); roundContour_.clear(); linePoints_.clear();
     if (mode == Mode::RoundObject) emit statusMessage(tr("Округление: щёлкните центр, затем точки контура; Enter — применить."));
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
@@ -696,6 +697,12 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
         smartSelect(cursorDirection_,event->modifiers() & Qt::AltModifier ? -1 : event->modifiers() & Qt::ShiftModifier ? 1 : 0);
         event->accept();return;
     }
+    if (mode_ == Mode::SphericalWarp && event->button()==Qt::LeftButton && hasImage()) {
+        sphericalWarpStart_=cursorDirection_;
+        sphericalWarpEnd_=cursorDirection_;
+        sphericalWarpDragging_=true;
+        event->accept();update();return;
+    }
     if (mode_ == Mode::Straighten && event->button()==Qt::LeftButton && hasImage()) {
         if (linePoints_.size()<128) linePoints_.append(cursorDirection_);
         update(); event->accept(); return;
@@ -766,6 +773,12 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
         levelRotation_=(levelRotation_*delta).normalized();levelAnchor_=next;lastMouse_=event->pos();
         levelRotationChanged();update();event->accept();return;
     }
+    if(mode_==Mode::SphericalWarp && sphericalWarpDragging_ && (event->buttons() & Qt::LeftButton)){
+        sphericalWarpEnd_=directionFromScreen(event->position());
+        cursorDirection_=sphericalWarpEnd_;
+        lastMouse_=event->pos();
+        update();event->accept();return;
+    }
     if (mode_==Mode::MeshWarp && meshCenter_ && meshDrag_>=0 && (event->buttons() & Qt::LeftButton)) {
         auto d=directionFromScreen(event->position()); float z=QVector3D::dotProduct(d,*meshCenter_);
         if(z>0) {
@@ -793,6 +806,22 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
 }
 void SphereView::mouseReleaseEvent(QMouseEvent *event) {
     if(event->button()==Qt::LeftButton)levelDragging_=false;
+    if(event->button()==Qt::LeftButton && sphericalWarpDragging_){
+        sphericalWarpEnd_=directionFromScreen(event->position());
+        sphericalWarpDragging_=false;
+        if((sphericalWarpStart_-sphericalWarpEnd_).lengthSquared()>1e-8f){
+            pushUndo();
+            const QRegion changed=SphericalLiquify::applyDrag(editLayer_,composite_,composite_,
+                sphericalWarpStart_,sphericalWarpEnd_,brushRadius_,toolStrength_);
+            if(!changed.isEmpty()){
+                partialTextureDirty_+=changed;
+                revision_=nextRevision_++;
+                setModified(revision_!=savedRevision_);
+                emit statusMessage(tr("Участок сферы перемещён. Ctrl+Z — отменить."));
+            }else if(!undoStack_.isEmpty())undoStack_.removeLast();
+        }
+        update();event->accept();return;
+    }
     if (event->button() == Qt::LeftButton) {
         meshDrag_ = -1;
         painting_ = false;
