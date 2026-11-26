@@ -574,7 +574,10 @@ void SphereView::paintGL() {
         for(int i=0;i<16;++i) if(visible[i]) {
             if(i%4<3 && visible[i+1]) painter.drawLine(pts[i],pts[i+1]);
             if(i/4<3 && visible[i+4]) painter.drawLine(pts[i],pts[i+4]);
-            if(i%4>0 && i%4<3 && i/4>0 && i/4<3) painter.drawEllipse(pts[i],5,5);
+            const bool fixedCorner=i==0||i==3||i==12||i==15;
+            painter.setPen(QPen(fixedCorner?QColor(130,150,160):QColor(40,220,255),1));
+            painter.setBrush(i==meshDrag_?QColor(255,190,40):fixedCorner?QColor(70,80,90):QColor(20,150,190));
+            painter.drawEllipse(pts[i],fixedCorner?3:6,fixedCorner?3:6);
         }
     }
     if (mode_ == Mode::Straighten && !linePoints_.isEmpty()) {
@@ -734,16 +737,25 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
             meshExtent_=std::tan(float(brushRadius_)*rad);
             meshOffsets_.fill(QVector2D(),16);
         } else {
-            float z=QVector3D::dotProduct(cursorDirection_,*meshCenter_);
-            if(z>0) {
-                QVector2D p(QVector3D::dotProduct(cursorDirection_,meshU_)/z/meshExtent_,QVector3D::dotProduct(cursorDirection_,meshV_)/z/meshExtent_);
-                float best=0.25f;
-                for(int i: {5,6,9,10}) {
-                    QVector2D node(-1.f+2.f*(i%4)/3.f,-1.f+2.f*(i/4)/3.f);
-                    float dist=(p-node+meshOffsets_[i]*float(toolStrength_)).length();
-                    if(dist<best){best=dist;meshDrag_=i;}
-                }
+            // Pick the closest visible control point in screen space. All
+            // non-corner nodes are editable; fixed corners keep the patch stable.
+            QMatrix4x4 projection;
+            projection.perspective(fov_, float(width())/std::max(1,height()), 0.01f, 10.0f);
+            QMatrix4x4 view;
+            view.rotate(-pitch_,1,0,0); view.rotate(-yaw_,0,1,0);
+            float bestDistance=20.0f;
+            for(int i=0;i<16;++i) {
+                if(i==0||i==3||i==12||i==15) continue;
+                QVector2D node(-1.f+2.f*(i%4)/3.f,-1.f+2.f*(i/4)/3.f);
+                node-=meshOffsets_[i]*float(toolStrength_);
+                const QVector3D dir=(*meshCenter_+meshExtent_*(node.x()*meshU_+node.y()*meshV_)).normalized();
+                const QVector4D q=projection*view*QVector4D(dir,1);
+                if(q.w()<=0.001f)continue;
+                const QPointF screen((q.x()/q.w()+1)*width()/2.0,(1-q.y()/q.w())*height()/2.0);
+                const float distance=float(QLineF(screen,event->position()).length());
+                if(distance<bestDistance){bestDistance=distance;meshDrag_=i;}
             }
+            meshDragging_=meshDrag_>=0;
         }
         update(); event->accept(); return;
     }
@@ -799,13 +811,13 @@ void SphereView::mouseMoveEvent(QMouseEvent *event) {
         lastMouse_=event->pos();
         update();event->accept();return;
     }
-    if (mode_==Mode::MeshWarp && meshCenter_ && meshDrag_>=0 && (event->buttons() & Qt::LeftButton)) {
+    if (mode_==Mode::MeshWarp && meshCenter_ && meshDragging_ && meshDrag_>=0 && (event->buttons() & Qt::LeftButton)) {
         auto d=directionFromScreen(event->position()); float z=QVector3D::dotProduct(d,*meshCenter_);
         if(z>0) {
             QVector2D p(QVector3D::dotProduct(d,meshU_)/z/meshExtent_,QVector3D::dotProduct(d,meshV_)/z/meshExtent_);
             QVector2D node(-1.f+2.f*(meshDrag_%4)/3.f,-1.f+2.f*(meshDrag_/4)/3.f);
             auto off=(node-p)/float(std::max(0.01,toolStrength_));
-            meshOffsets_[meshDrag_]=QVector2D(clampf(off.x(),-0.15f,0.15f),clampf(off.y(),-0.15f,0.15f));
+            meshOffsets_[meshDrag_]=QVector2D(clampf(off.x(),-0.65f,0.65f),clampf(off.y(),-0.65f,0.65f));
         }
     } else if (painting_ && (event->buttons() & Qt::LeftButton)) {
         const auto next = directionFromScreen(event->position());
@@ -844,6 +856,7 @@ void SphereView::mouseReleaseEvent(QMouseEvent *event) {
     }
     if (event->button() == Qt::LeftButton) {
         meshDrag_ = -1;
+        meshDragging_ = false;
         painting_ = false;
         lastStroke_.reset();
         cloneSnapshot_ = {};
