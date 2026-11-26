@@ -104,6 +104,7 @@ private:
     float meshExtent_ = 0.2f;
     QVector<QVector2D> meshOffsets_;
     int meshDrag_ = -1;
+    bool meshDragging_ = false;
     QVector2D meshStart_;
     struct DiagnosticMark { QVector3D direction; QColor color; QString label; };
     QVector<DiagnosticMark> diagnosticMarks_;
