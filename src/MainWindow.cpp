@@ -253,6 +253,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     };
 
     auto *correctionMenu = menuBar()->addMenu(tr("&Коррекция"));
+    addMenuAction(correctionMenu, tr("HDR и локальный контраст"),
+        tr("Восстановление тонов и усиление локальных деталей"), [this] {
+            if (!aiWatcher_) view_->colorGrading();
+        }, ToolIcons::Kind::Color);
     addMenuAction(correctionMenu, tr("Цветокоррекция и уровни"),
         tr("Цветовые каналы, яркость, контраст и тон"), [this] {
             if (!aiWatcher_) view_->colorGrading();
