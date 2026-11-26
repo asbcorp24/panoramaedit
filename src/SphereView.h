@@ -50,6 +50,7 @@ public:
     void stretchPoleTexture();
     void localColorCorrection();
     void colorGrading();
+    void panoramaAutoCorrection();
     void clearDiagnostics();
     void roundObject();
     void roundFromSelection();
@@ -125,6 +126,8 @@ private:
     QVector3D levelAnchor_;
     Q_SIGNAL void levelRotationChanged();
     QQuaternion levelRotation_;
+    bool panoramaCorrectionPreview_=false;
+    float panoramaCorrection_[28]={};
     bool gradingPreview_=false, gradingMasked_=false;
     float grading_[12]={};
     bool colorPreview_=false;
