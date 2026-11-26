@@ -328,6 +328,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         }, ToolIcons::Kind::ClearAi);
 
     auto *geometryMenu = menuBar()->addMenu(tr("&Геометрия"));
+    addMenuAction(geometryMenu, tr("Архитектурная коррекция — вертикали"),
+        tr("Выберите две точки на вертикальном ребре здания и выровняйте его"), [this] {
+            view_->architecturalCorrection();
+        }, ToolIcons::Kind::Push);
+    geometryMenu->addSeparator();
     addMenuAction(geometryMenu, tr("Выпрямить линию"),
         tr("Выпрямить отмеченную линию"), [this] { view_->straightenLine(); });
     addMenuAction(geometryMenu, tr("Сбросить линию"),
