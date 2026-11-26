@@ -20,6 +20,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include "SphereView.h"
 #include "SphericalLiquify.h"
+#include "GpuImageProcessor.h"
 #include <QMouseEvent>
 #include <QImageReader>
 #include <QFile>
@@ -1642,7 +1643,34 @@ void SphereView::colorGrading(){
     int decision=dialog.exec();gradingPreview_=false;values();
     composite_=original;hasAiSelection_=selected;fullTextureDirty_=true;
     if(decision==QDialog::Accepted){
-        QImage result=render();
+        QImage result;
+        GpuImageProcessor::Grade gpuGrade;
+        gpuGrade.blackPoint=grading_[0];
+        gpuGrade.whitePoint=grading_[1];
+        gpuGrade.gamma=grading_[2];
+        gpuGrade.brightness=grading_[3];
+        gpuGrade.contrast=grading_[4];
+        gpuGrade.saturation=grading_[5];
+        gpuGrade.temperature=grading_[6];
+        gpuGrade.red=grading_[7];
+        gpuGrade.green=grading_[8];
+        gpuGrade.blue=grading_[9];
+        gpuGrade.shadows=grading_[10];
+        gpuGrade.highlights=grading_[11];
+        QString gpuError;
+        bool gpuApplied=false;
+        if(context() && isValid()){
+            makeCurrent();
+            gpuApplied=GpuImageProcessor::applyGrade(original,mask,gradingMasked_,
+                gpuGrade,&result,&gpuError,2048);
+            doneCurrent();
+        }else gpuError=tr("OpenGL-контекст недоступен.");
+        if(!gpuApplied){
+            result=render();
+            emit statusMessage(tr("GPU-обработка недоступна — применён CPU-режим: %1").arg(gpuError));
+        }else{
+            emit statusMessage(tr("Цветокоррекция обработана на GPU тайлами 2048×2048."));
+        }
         if(result!=original){pushUndo();editLayer_=result;composite_=result;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
     }
     update();
