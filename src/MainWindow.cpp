@@ -257,6 +257,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         tr("Восстановление тонов и усиление локальных деталей"), [this] {
             if (!aiWatcher_) view_->colorGrading();
         }, ToolIcons::Kind::Color);
+    addMenuAction(correctionMenu, tr("Dehaze + Clarity + Texture"),
+        tr("Удаление дымки, локальный контраст и детализация фактуры"), [this] {
+            if (!aiWatcher_) view_->colorGrading();
+        }, ToolIcons::Kind::Color);
     addMenuAction(correctionMenu, tr("Цветокоррекция и уровни"),
         tr("Цветовые каналы, яркость, контраст и тон"), [this] {
             if (!aiWatcher_) view_->colorGrading();
