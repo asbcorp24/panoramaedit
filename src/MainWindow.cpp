@@ -172,6 +172,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
                       tr("Мягко свести левый и правый края. Ширина — радиус кисти."), 3);
     connect(seam, &QPushButton::clicked, view_, &SphereView::smoothSeam);
 
+    auto *panoramaAuto = new QPushButton(tr("Автокоррекция панорамы"), panel);
+    panoramaAuto->setToolTip(tr("Автобаланс освещения, выравнивание цвета шва и автоматический баланс белого"));
+    panelLayout->addWidget(panoramaAuto);
+    connect(panoramaAuto, &QPushButton::clicked, view_, &SphereView::panoramaAutoCorrection);
+
     auto *grading = new QPushButton(tr("Цветокоррекция / уровни"), panel);
     panelLayout->addWidget(grading);
     connect(grading, &QPushButton::clicked, this, [this]{if(!aiWatcher_)view_->colorGrading();});
