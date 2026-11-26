@@ -58,6 +58,7 @@ public:
     void applyMesh();
     void resetMesh();
     void straightenLine();
+    void architecturalCorrection();
     void resetLine();
     void showZenith();
     void showNadir();
@@ -73,6 +74,7 @@ signals:
     void modifiedChanged(bool modified);
     void statusMessage(const QString &message);
     void gradientCenterPicked();
+    void architectureGuidePointPicked();
 
 protected:
     void initializeGL() override;
@@ -128,6 +130,8 @@ private:
     QVector3D levelAnchor_;
     Q_SIGNAL void levelRotationChanged();
     QQuaternion levelRotation_;
+    bool architecturePicking_=false;
+    QVector<QVector3D> architectureGuidePoints_;
     bool gradientPreview_=false, gradientPicking_=false;
     bool gradientLatitude_=false;
     QVector3D gradientCenter_{0,1,0};
