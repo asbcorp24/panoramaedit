@@ -5,6 +5,7 @@
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLVertexArrayObject>
+#include <QPainter>
 
 #include <algorithm>
 #include <array>
@@ -58,9 +59,11 @@ bool uploadTexture(QOpenGLFunctions_3_3_Core *gl, GLuint *texture,
     gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    gl->glPixelStorei(GL_UNPACK_ROW_LENGTH, image.bytesPerLine() / (format == GL_RGBA ? 4 : 1));
     gl->glTexImage2D(GL_TEXTURE_2D, 0, GLint(internalFormat),
                      image.width(), image.height(), 0, format,
                      GL_UNSIGNED_BYTE, image.constBits());
+    gl->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     return gl->glGetError() == GL_NO_ERROR;
 }
 
@@ -116,10 +119,21 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
     fboFormat.setAttachment(QOpenGLFramebufferObject::NoAttachment);
     fboFormat.setInternalTextureFormat(GL_RGBA8);
 
+    GLint previousViewport[4]={0,0,0,0}, previousFramebuffer=0, previousActiveTexture=GL_TEXTURE0;
+    gl.glGetIntegerv(GL_VIEWPORT, previousViewport);
+    gl.glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+    gl.glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
+    const GLboolean depthWasEnabled=gl.glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blendWasEnabled=gl.glIsEnabled(GL_BLEND);
     GLuint sourceTexture = 0, maskTexture = 0;
     const auto cleanup = [&] {
         if (sourceTexture) gl.glDeleteTextures(1, &sourceTexture);
         if (maskTexture) gl.glDeleteTextures(1, &maskTexture);
+        gl.glBindFramebuffer(GL_FRAMEBUFFER, GLuint(previousFramebuffer));
+        gl.glViewport(previousViewport[0],previousViewport[1],previousViewport[2],previousViewport[3]);
+        if(depthWasEnabled)gl.glEnable(GL_DEPTH_TEST);else gl.glDisable(GL_DEPTH_TEST);
+        if(blendWasEnabled)gl.glEnable(GL_BLEND);else gl.glDisable(GL_BLEND);
+        gl.glActiveTexture(GLenum(previousActiveTexture));
         vao.destroy();
         program.release();
     };
