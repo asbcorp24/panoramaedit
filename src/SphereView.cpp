@@ -1680,7 +1680,7 @@ void SphereView::colorGrading(){
         bool gpuApplied=false;
         if(context() && isValid()){
             makeCurrent();
-            gpuApplied=GpuImageProcessor::applyGrade(original,mask,gradingMasked_,
+            gpuApplied=GpuImageProcessor::GpuImageProcessor::applyGrade(original,mask,gradingMasked_,
                 gpuGrade,&result,&gpuError,2048);
             doneCurrent();
         }else gpuError=tr("OpenGL-контекст недоступен.");
