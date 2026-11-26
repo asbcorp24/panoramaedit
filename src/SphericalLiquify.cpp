@@ -166,7 +166,10 @@ QRegion applyDrag(QImage &layer, QImage &composite, const QImage &source,
     const QVector3D from=start.normalized(), to=end.normalized();
     const double displacement=std::acos(clamp1(QVector3D::dotProduct(from,to)));
     if(displacement<1e-5) return {};
-    const double radius=std::clamp(radiusDegrees,0.1,90.0)*pi/180.0;
+    // Keep both the grabbed point and destination inside the influence area.
+    // Long drags therefore widen smoothly instead of leaving a duplicated source.
+    const double radius=std::max(std::clamp(radiusDegrees,0.1,90.0)*pi/180.0,
+                                 displacement*1.08);
     const double intensity=std::clamp(strength,0.01,1.0);
     const QQuaternion inverse=QQuaternion::rotationTo(to,from);
     const QQuaternion identity;
