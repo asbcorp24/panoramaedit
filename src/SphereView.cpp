@@ -649,6 +649,16 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if(architecturePicking_ && event->button()==Qt::LeftButton && hasImage()){
+        architectureGuidePoints_.append(cursorDirection_);
+        if(architectureGuidePoints_.size()>=2){
+            architecturePicking_=false;
+            emit architectureGuidePointPicked();
+        }else emit statusMessage(tr("Первая точка вертикали выбрана. Укажите вторую точку на той же линии."));
+        update();
+        event->accept();
+        return;
+    }
     if(gradientPicking_ && event->button()==Qt::LeftButton && hasImage()){
         gradientCenter_=cursorDirection_;
         gradientPicking_=false;
@@ -1896,4 +1906,83 @@ void SphereView::sphericalGradient(){
         if(result!=original){pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
     }else gradientCenter_=oldCenter;
     update();
+}
+
+void SphereView::architecturalCorrection(){
+    if(!hasImage()||architecturePicking_||levelPreview_)return;
+    setMode(Mode::Navigate);
+    showHorizon();
+    architectureGuidePoints_.clear();
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Архитектурная коррекция — вертикали"));
+    auto *layout=new QFormLayout(&dialog);
+    auto *hint=new QLabel(tr("Выберите две точки на одной вертикальной линии здания. Лучше брать длинное ребро колонны, стены или дверного проёма."),&dialog);
+    hint->setWordWrap(true);layout->addRow(hint);
+    auto *pick=new QPushButton(tr("Указать вертикальную линию на сфере"),&dialog);
+    auto *pointsLabel=new QLabel(tr("Точки не выбраны"),&dialog);
+    layout->addRow(pick);layout->addRow(pointsLabel);
+    auto *strength=new QSlider(Qt::Horizontal,&dialog);strength->setRange(0,100);strength->setValue(100);
+    layout->addRow(tr("Сила коррекции"),strength);
+    auto *before=new QCheckBox(tr("Показать оригинал"),&dialog);layout->addRow(before);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addRow(buttons);
+    const QImage original=composite_;
+    const quint64 doc=documentId_,rev=revision_;
+    QQuaternion correction;
+    bool hasCorrection=false;
+    auto preview=[&]{
+        if(!hasCorrection||before->isChecked()){levelPreview_=false;update();return;}
+        levelRotation_=QQuaternion::slerp(QQuaternion(),correction,strength->value()/100.f);
+        levelPreview_=true;update();
+    };
+    connect(pick,&QPushButton::clicked,&dialog,[&]{
+        architectureGuidePoints_.clear();architecturePicking_=true;
+        pointsLabel->setText(tr("Щёлкните первую, затем вторую точку одной вертикали."));
+        dialog.hide();
+        emit statusMessage(tr("Выберите две точки на одной вертикали здания."));
+    });
+    connect(this,&SphereView::architectureGuidePointPicked,&dialog,[&]{
+        if(architectureGuidePoints_.size()<2)return;
+        const QVector3D a=architectureGuidePoints_[0],b=architectureGuidePoints_[1];
+        QVector3D normal=QVector3D::crossProduct(a,b);
+        const float separation=std::acos(clampf(QVector3D::dotProduct(a,b),-1.f,1.f));
+        if(normal.length()<0.02f||separation<3.f*rad||separation>150.f*rad){
+            architectureGuidePoints_.clear();
+            pointsLabel->setText(tr("Точки слишком близко или почти противоположны. Выберите заново."));
+            dialog.show();return;
+        }
+        normal.normalize();
+        QVector3D horizontal(normal.x(),0.f,normal.z());
+        if(horizontal.length()<0.02f){
+            pointsLabel->setText(tr("Эта линия уже близка к вертикальной. Можно выбрать другую."));
+            architectureGuidePoints_.clear();dialog.show();return;
+        }
+        horizontal.normalize();
+        correction=QQuaternion::rotationTo(horizontal,normal);
+        hasCorrection=true;
+        pointsLabel->setText(tr("Вертикаль определена. Можно менять силу коррекции."));
+        dialog.show();preview();
+    });
+    connect(strength,&QSlider::valueChanged,&dialog,[&](int){preview();});
+    connect(before,&QCheckBox::toggled,&dialog,[&](bool){preview();});
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    const int decision=dialog.exec();
+    architecturePicking_=false;levelPreview_=false;
+    if(doc==documentId_&&rev==revision_&&decision==QDialog::Accepted&&hasCorrection&&strength->value()>0){
+        const QQuaternion applied=QQuaternion::slerp(QQuaternion(),correction,strength->value()/100.f);
+        QImage result(original.size(),QImage::Format_RGBA8888);
+        if(!result.isNull()){
+            for(int y=0;y<result.height();++y)for(int x=0;x<result.width();++x){
+                const QVector3D direction=SphericalRaster::pixelDirection(x,y,result.width(),result.height());
+                result.setPixelColor(x,y,QColor::fromRgba(SphericalRaster::sampleDirection(original,applied.rotatedVector(direction))));
+            }
+            if(result!=original){
+                pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;
+                revision_=nextRevision_++;setModified(revision_!=savedRevision_);
+                clearAiSelection();clearDiagnostics();resetMesh();resetLine();
+                emit statusMessage(tr("Архитектурная вертикаль выровнена. Ctrl+Z — отменить."));
+            }
+        }
+    }
+    architectureGuidePoints_.clear();update();
 }
