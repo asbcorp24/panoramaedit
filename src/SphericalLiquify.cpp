@@ -98,13 +98,37 @@ QRegion apply(QImage &layer, QImage &composite, const QImage &source,
             } else {
                 const QVector3D tangent = normalizedOr(
                     direction - anchor * float(std::cos(angle)), direction);
-                // Both radial tools hold the centre fixed and decay to zero
-                // at the brush edge, so repeated dabs accumulate naturally.
-                const double sampleAngle = tool == Tool::Bloat
-                    ? angle * (1.0 - 0.85 * effect)
-                    : angle * (1.0 + 0.85 * effect);
-                sampleDirection = normalizedOr(anchor * float(std::cos(sampleAngle)) +
-                    tangent * float(std::sin(sampleAngle)), direction);
+                if (tool == Tool::Stretch || tool == Tool::Compress) {
+                    // Directional spherical warp: stretch/compress only along
+                    // the last brush movement axis; the perpendicular axis
+                    // and the surrounding area remain substantially stable.
+                    QVector3D axis = previous - anchor * QVector3D::dotProduct(previous, anchor);
+                    if (axis.lengthSquared() < 1e-8f) {
+                        const QVector3D ref = std::abs(anchor.y()) < 0.9f
+                            ? QVector3D(0,1,0) : QVector3D(1,0,0);
+                        axis = QVector3D::crossProduct(ref, anchor);
+                    }
+                    axis.normalize();
+                    const QVector3D side = QVector3D::crossProduct(anchor, axis).normalized();
+                    const double along = angle * QVector3D::dotProduct(tangent, axis);
+                    const double across = angle * QVector3D::dotProduct(tangent, side);
+                    const double factor = 1.0 + 1.35 * effect;
+                    const double sourceAlong = tool == Tool::Stretch
+                        ? along / factor : along * factor;
+                    const double sourceAngle = std::hypot(sourceAlong, across);
+                    const QVector3D sourceTangent = normalizedOr(
+                        axis * float(sourceAlong) + side * float(across), tangent);
+                    sampleDirection = normalizedOr(
+                        anchor * float(std::cos(sourceAngle)) +
+                        sourceTangent * float(std::sin(sourceAngle)), direction);
+                } else {
+                    // Radial legacy tools remain available independently.
+                    const double sampleAngle = tool == Tool::Bloat
+                        ? angle * (1.0 - 0.85 * effect)
+                        : angle * (1.0 + 0.85 * effect);
+                    sampleDirection = normalizedOr(anchor * float(std::cos(sampleAngle)) +
+                        tangent * float(std::sin(sampleAngle)), direction);
+                }
             }
 
             const QRgb sampled = SphericalRaster::sampleDirection(source, sampleDirection);
