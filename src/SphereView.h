@@ -51,6 +51,7 @@ public:
     void localColorCorrection();
     void colorGrading();
     void panoramaAutoCorrection();
+    void sphericalGradient();
     void clearDiagnostics();
     void roundObject();
     void roundFromSelection();
@@ -71,6 +72,7 @@ signals:
     void imageChanged();
     void modifiedChanged(bool modified);
     void statusMessage(const QString &message);
+    void gradientCenterPicked();
 
 protected:
     void initializeGL() override;
@@ -126,6 +128,10 @@ private:
     QVector3D levelAnchor_;
     Q_SIGNAL void levelRotationChanged();
     QQuaternion levelRotation_;
+    bool gradientPreview_=false, gradientPicking_=false;
+    bool gradientLatitude_=false;
+    QVector3D gradientCenter_{0,1,0};
+    float gradientInner_=0.15f, gradientOuter_=0.8f, gradientStrength_=0.0f, gradientWarmth_=0.0f;
     bool panoramaCorrectionPreview_=false;
     float panoramaCorrection_[28]={};
     bool gradingPreview_=false, gradingMasked_=false;
