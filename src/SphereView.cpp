@@ -249,6 +249,10 @@ uniform sampler2D uMask;
 uniform bool uShowMask;
 uniform bool uColorPreview;
 uniform bool uGrading, uGradingMasked;
+uniform bool uGradient;
+uniform bool uGradientLatitude;
+uniform vec3 uGradientCenter;
+uniform vec4 uGradientParams;
 uniform bool uPanoramaCorrection;
 uniform float uPanoramaCorrectionValues[28];
 uniform float uGrade[12];
@@ -287,6 +291,15 @@ void main() {
     float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
     if(uPoleStretchPreview){v+=uPoleStretch;if(v<0.0 || v>1.0){fragColor=vec4(0.12,0.12,0.12,1);return;}}
     fragColor = texture(uPanorama, vec2(u, v));
+    if(uGradient){
+        float angle=acos(clamp(dot(normalize(d),normalize(uGradientCenter)),-1.0,1.0))/PI;
+        float coord=uGradientLatitude ? (1.0-d.y)*0.5 : angle;
+        float mask=1.0-smoothstep(uGradientParams.x,uGradientParams.y,coord);
+        vec3 rgb=fragColor.rgb;
+        rgb+=vec3(uGradientParams.w*0.20,0.0,-uGradientParams.w*0.20);
+        rgb+=(rgb-0.5)*uGradientParams.z*mask;
+        fragColor.rgb=clamp(mix(fragColor.rgb,rgb,mask),0.0,1.0);
+    }
     if(uPanoramaCorrection){
         vec3 rgb=fragColor.rgb;
         float sector=fract(u)*16.0;
@@ -467,6 +480,10 @@ void SphereView::paintGL() {
     shader_->setUniformValue("uColorPreview",colorPreview_);
     shader_->setUniformValue("uGrading",gradingPreview_);
     shader_->setUniformValue("uPanoramaCorrection",panoramaCorrectionPreview_);
+    shader_->setUniformValue("uGradient",gradientPreview_);
+    shader_->setUniformValue("uGradientLatitude",gradientLatitude_);
+    shader_->setUniformValue("uGradientCenter",gradientCenter_);
+    shader_->setUniformValue("uGradientParams",QVector4D(gradientInner_,gradientOuter_,gradientStrength_,gradientWarmth_));
     shader_->setUniformValueArray("uPanoramaCorrectionValues",panoramaCorrection_,28,1);
     shader_->setUniformValue("uGradingMasked",gradingMasked_);
     shader_->setUniformValueArray("uGrade",grading_,12,1);
@@ -631,6 +648,14 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
     cursorInside_ = true;
     cursorDirection_ = directionFromScreen(event->position());
     lastMouse_ = event->pos();
+    if(gradientPicking_ && event->button()==Qt::LeftButton && hasImage()){
+        gradientCenter_=cursorDirection_;
+        gradientPicking_=false;
+        emit gradientCenterPicked();
+        update();
+        event->accept();
+        return;
+    }
     if(levelPreview_ && event->button()==Qt::LeftButton){
         levelDragging_=true;levelAnchor_=cursorDirection_;event->accept();return;
     }
@@ -1699,5 +1724,83 @@ void SphereView::panoramaAutoCorrection(){
         }
         if(result!=original){pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
     }
+    update();
+}
+
+void SphereView::sphericalGradient(){
+    if(!hasImage()||gradientPreview_||gradingPreview_||levelPreview_||poleStretchPreview_)return;
+    QDialog dialog(this);dialog.setWindowTitle(tr("Сферический градиент"));
+    auto *layout=new QFormLayout(&dialog);
+    auto *mode=new QComboBox(&dialog);
+    mode->addItems({tr("Радиальный от точки на сфере"),tr("По высоте — зенит / надир")});
+    layout->addRow(tr("Тип градиента"),mode);
+    auto *pick=new QPushButton(tr("Указать центр на сфере"),&dialog);
+    auto *centerLabel=new QLabel(tr("Центр: зенит (по умолчанию)"),&dialog);
+    layout->addRow(pick);layout->addRow(centerLabel);
+    auto *inner=new QSlider(Qt::Horizontal,&dialog);inner->setRange(0,100);inner->setValue(15);
+    auto *outer=new QSlider(Qt::Horizontal,&dialog);outer->setRange(1,100);outer->setValue(80);
+    auto *strength=new QSlider(Qt::Horizontal,&dialog);strength->setRange(-100,100);strength->setValue(0);
+    auto *warmth=new QSlider(Qt::Horizontal,&dialog);warmth->setRange(-100,100);warmth->setValue(0);
+    layout->addRow(tr("Радиус начала перехода"),inner);
+    layout->addRow(tr("Ширина / радиус окончания"),outer);
+    layout->addRow(tr("Осветление / затемнение"),strength);
+    layout->addRow(tr("Холодный / тёплый оттенок"),warmth);
+    auto *before=new QCheckBox(tr("Показать оригинал"),&dialog);layout->addRow(before);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addRow(buttons);
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    const QVector3D oldCenter=gradientCenter_;
+    gradientPreview_=true;gradientPicking_=false;
+    auto refresh=[&]{
+        gradientLatitude_=mode->currentIndex()==1;
+        gradientInner_=inner->value()/100.f;
+        gradientOuter_=std::max(gradientInner_+.01f,outer->value()/100.f);
+        gradientStrength_=strength->value()/100.f;
+        gradientWarmth_=warmth->value()/100.f;
+        gradientPreview_=!before->isChecked();
+        update();
+    };
+    connect(mode,qOverload<int>(&QComboBox::currentIndexChanged),&dialog,[&](int){refresh();});
+    for(auto *slider:{inner,outer,strength,warmth})connect(slider,&QSlider::valueChanged,&dialog,[&](int){refresh();});
+    connect(before,&QCheckBox::toggled,&dialog,[&](bool){refresh();});
+    connect(pick,&QPushButton::clicked,&dialog,[&]{
+        gradientPicking_=true;centerLabel->setText(tr("Щёлкните по нужной точке на сфере…"));
+        emit statusMessage(tr("Выберите центр градиента щелчком по сфере."));
+    });
+    connect(this,&SphereView::gradientCenterPicked,&dialog,[&]{
+        centerLabel->setText(tr("Центр выбран: %1°, %2°")
+            .arg(std::atan2(gradientCenter_.x(),-gradientCenter_.z())/rad,0,'f',1)
+            .arg(std::asin(clampf(gradientCenter_.y(),-1,1))/rad,0,'f',1));
+    });
+    refresh();
+    int decision=dialog.exec();
+    gradientPicking_=false;gradientPreview_=false;
+    if(decision==QDialog::Accepted){
+        const QImage original=composite_;
+        const int w=original.width(),h=original.height();
+        QImage result(original.size(),QImage::Format_RGBA8888);
+        for(int y=0;y<h;++y){
+            float latitude=(.5f-(y+.5f)/h)*PI;
+            for(int x=0;x<w;++x){
+                float longitude=((x+.5f)/w*2-1)*PI;
+                QVector3D d(std::cos(latitude)*std::sin(longitude),std::sin(latitude),-std::cos(latitude)*std::cos(longitude));
+                float coord=gradientLatitude_?(1-d.y())*.5f:std::acos(clampf(QVector3D::dotProduct(d,gradientCenter_),-1,1))/PI;
+                float mask=1.f;
+                if(coord>gradientInner_){
+                    float t=clampf((coord-gradientInner_)/std::max(.001f,gradientOuter_-gradientInner_),0,1);
+                    mask=1.f-(t*t*(3-2*t));
+                }
+                QColor c=original.pixelColor(x,y);
+                float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
+                for(int ch=0;ch<3;++ch){
+                    float tint=ch==0?gradientWarmth_*.20f:ch==2?-gradientWarmth_*.20f:0.f;
+                    float target=std::clamp(rgb[ch]+tint+(rgb[ch]-.5f)*gradientStrength_,0.f,1.f);
+                    rgb[ch]=rgb[ch]+(target-rgb[ch])*mask;
+                }
+                result.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
+            }
+        }
+        if(result!=original){pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
+    }else gradientCenter_=oldCenter;
     update();
 }
