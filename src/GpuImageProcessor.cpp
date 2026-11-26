@@ -186,7 +186,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
             const GLenum drawError = gl.glGetError();
             QImage tileResult;
             if (drawError == GL_NO_ERROR)
-                tileResult = fbo.toImage(true).convertToFormat(QImage::Format_RGBA8888);
+                tileResult = fbo.toImage(false).convertToFormat(QImage::Format_RGBA8888);
             fbo.release();
             if (drawError != GL_NO_ERROR || tileResult.size() != rect.size()) {
                 cleanup();
