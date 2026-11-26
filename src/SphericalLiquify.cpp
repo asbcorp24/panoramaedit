@@ -154,4 +154,72 @@ QRegion apply(QImage &layer, QImage &composite, const QImage &source,
     }
     return dirty;
 }
+
+QRegion applyDrag(QImage &layer, QImage &composite, const QImage &source,
+                  const QVector3D &start, const QVector3D &end,
+                  double radiusDegrees, double strength) {
+    if (layer.isNull() || composite.isNull() || source.isNull() ||
+        layer.size()!=composite.size() || layer.size()!=source.size() ||
+        start.lengthSquared()<1e-12f || end.lengthSquared()<1e-12f)
+        return {};
+    const QVector3D from=start.normalized(), to=end.normalized();
+    const double displacement=std::acos(clamp1(QVector3D::dotProduct(from,to)));
+    if(displacement<1e-5) return {};
+    const double radius=std::clamp(radiusDegrees,0.1,90.0)*pi/180.0;
+    const double intensity=std::clamp(strength,0.01,1.0);
+    const QQuaternion inverse=QQuaternion::rotationTo(to,from);
+    const QQuaternion identity;
+    const int width=source.width(),height=source.height();
+    const double latitude=std::asin(clamp1(to.y()));
+    const int cy=std::clamp(int((0.5-latitude/pi)*height),0,height-1);
+    const int ry=int(std::ceil(radius*height/pi))+2;
+    std::vector<PixelChange> changes;
+    QRegion dirty;
+    for(int y=std::max(0,cy-ry);y<=std::min(height-1,cy+ry);++y){
+        const double phi=pi*(0.5-(y+0.5)/height);
+        const double den=std::cos(phi)*std::cos(latitude);
+        const double num=std::cos(radius)-std::sin(phi)*std::sin(latitude);
+        const double threshold=den>1e-8?num/den:(num<=0.0?-1.0:2.0);
+        if(threshold>1.0)continue;
+        const double span=threshold<=-1.0?pi:std::acos(clamp1(threshold));
+        const double lon=std::atan2(to.x(),-to.z());
+        const int cx=int((lon/(2.0*pi)+0.5)*width);
+        const int rx=int(std::ceil(span*width/(2.0*pi)))+2;
+        const bool full=rx>=width/2;
+        const int first=full?0:cx-rx,last=full?width-1:cx+rx;
+        int firstChanged=0,lastChanged=-1;
+        for(int xi=first;xi<=last;++xi){
+            const int x=(xi%width+width)%width;
+            const QVector3D d=SphericalRaster::pixelDirection(x,y,width,height);
+            const double angle=std::acos(clamp1(QVector3D::dotProduct(d,to)));
+            if(angle>=radius)continue;
+            const double t=1.0-angle/radius;
+            const double effect=intensity*t*t*(3.0-2.0*t);
+            const QQuaternion partial=QQuaternion::slerp(identity,inverse,float(effect));
+            const QVector3D sample=partial.rotatedVector(d).normalized();
+            const QRgb color=SphericalRaster::sampleDirection(source,sample);
+            const uchar *row=source.constScanLine(y)+x*4;
+            const QRgb current=qRgba(row[0],row[1],row[2],row[3]);
+            if(color==current)continue;
+            changes.push_back({x,y,color});
+            if(lastChanged<firstChanged)firstChanged=xi;
+            lastChanged=xi;
+        }
+        if(lastChanged>=firstChanged){
+            const int firstX=(firstChanged%width+width)%width;
+            const int count=lastChanged-firstChanged+1;
+            if(count>=width)dirty+=QRect(0,y,width,1);
+            else if(firstX+count<=width)dirty+=QRect(firstX,y,count,1);
+            else {dirty+=QRect(firstX,y,width-firstX,1);dirty+=QRect(0,y,firstX+count-width,1);}
+        }
+    }
+    int lastY=-1;uchar *lr=nullptr,*cr=nullptr;
+    for(const auto &change:changes){
+        if(change.y!=lastY){lr=layer.scanLine(change.y);cr=composite.scanLine(change.y);lastY=change.y;}
+        uchar *a=lr+change.x*4,*b=cr+change.x*4;
+        a[0]=qRed(change.color);a[1]=qGreen(change.color);a[2]=qBlue(change.color);a[3]=255;
+        std::memcpy(b,a,4);
+    }
+    return dirty;
+}
 } // namespace SphericalLiquify
