@@ -1826,29 +1826,51 @@ void SphereView::sphericalGradient(){
     gradientPicking_=false;gradientPreview_=false;
     if(decision==QDialog::Accepted){
         const QImage original=composite_;
-        const int w=original.width(),h=original.height();
-        QImage result(original.size(),QImage::Format_RGBA8888);
-        for(int y=0;y<h;++y){
-            float latitude=(.5f-(y+.5f)/h)*PI;
-            for(int x=0;x<w;++x){
-                float longitude=((x+.5f)/w*2-1)*PI;
-                QVector3D d(std::cos(latitude)*std::sin(longitude),std::sin(latitude),-std::cos(latitude)*std::cos(longitude));
-                float coord=gradientLatitude_?(1-d.y())*.5f:std::acos(clampf(QVector3D::dotProduct(d,gradientCenter_),-1,1))/PI;
-                float mask=1.f;
-                if(coord>gradientInner_){
-                    float t=clampf((coord-gradientInner_)/std::max(.001f,gradientOuter_-gradientInner_),0,1);
-                    mask=1.f-(t*t*(3-2*t));
+        QImage result;
+        GpuImageProcessor::GpuImageProcessor::Grade grade;
+        grade.sphericalGradient=true;
+        grade.gradientByLatitude=gradientLatitude_;
+        grade.gradientCenterX=gradientCenter_.x();
+        grade.gradientCenterY=gradientCenter_.y();
+        grade.gradientCenterZ=gradientCenter_.z();
+        grade.gradientInner=gradientInner_;
+        grade.gradientOuter=gradientOuter_;
+        grade.gradientStrength=gradientStrength_;
+        grade.gradientWarmth=gradientWarmth_;
+        QString gpuError;
+        bool gpuApplied=false;
+        if(context()&&isValid()){
+            makeCurrent();
+            gpuApplied=GpuImageProcessor::GpuImageProcessor::applyGrade(
+                original,QImage(),false,grade,&result,&gpuError,2048);
+            doneCurrent();
+        }else gpuError=tr("OpenGL-контекст недоступен.");
+        if(!gpuApplied){
+            const int w=original.width(),h=original.height();
+            result=QImage(original.size(),QImage::Format_RGBA8888);
+            for(int y=0;y<h;++y){
+                float latitude=(.5f-(y+.5f)/h)*PI;
+                for(int x=0;x<w;++x){
+                    float longitude=((x+.5f)/w*2-1)*PI;
+                    QVector3D d(std::cos(latitude)*std::sin(longitude),std::sin(latitude),-std::cos(latitude)*std::cos(longitude));
+                    float coord=gradientLatitude_?(1-d.y())*.5f:std::acos(clampf(QVector3D::dotProduct(d,gradientCenter_),-1,1))/PI;
+                    float mask=1.f;
+                    if(coord>gradientInner_){
+                        float t=clampf((coord-gradientInner_)/std::max(.001f,gradientOuter_-gradientInner_),0,1);
+                        mask=1.f-(t*t*(3-2*t));
+                    }
+                    QColor c=original.pixelColor(x,y);
+                    float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
+                    for(int ch=0;ch<3;++ch){
+                        float tint=ch==0?gradientWarmth_*.20f:ch==2?-gradientWarmth_*.20f:0.f;
+                        float target=std::clamp(rgb[ch]+tint+(rgb[ch]-.5f)*gradientStrength_,0.f,1.f);
+                        rgb[ch]=rgb[ch]+(target-rgb[ch])*mask;
+                    }
+                    result.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
                 }
-                QColor c=original.pixelColor(x,y);
-                float rgb[3]={float(c.redF()),float(c.greenF()),float(c.blueF())};
-                for(int ch=0;ch<3;++ch){
-                    float tint=ch==0?gradientWarmth_*.20f:ch==2?-gradientWarmth_*.20f:0.f;
-                    float target=std::clamp(rgb[ch]+tint+(rgb[ch]-.5f)*gradientStrength_,0.f,1.f);
-                    rgb[ch]=rgb[ch]+(target-rgb[ch])*mask;
-                }
-                result.setPixelColor(x,y,QColor::fromRgbF(rgb[0],rgb[1],rgb[2],c.alphaF()));
             }
-        }
+            emit statusMessage(tr("Сферический градиент: CPU-режим (%1)").arg(gpuError));
+        }else emit statusMessage(tr("Сферический градиент обработан на GPU тайлами 2048×2048."));
         if(result!=original){pushUndo();editLayer_=result;composite_=result;fullTextureDirty_=true;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
     }else gradientCenter_=oldCenter;
     update();
