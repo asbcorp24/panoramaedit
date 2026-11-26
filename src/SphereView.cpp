@@ -533,6 +533,19 @@ void SphereView::paintGL() {
     vertexArray_.release();
     shader_->release();
     if(levelPreview_){QPainter p(this);p.setPen(QPen(Qt::yellow,1,Qt::DashLine));p.drawLine(0,height()/2,width(),height()/2);}
+    if(sphericalWarpDragging_){
+        QPainter p(this);p.setRenderHint(QPainter::Antialiasing);
+        auto projectPoint=[&](const QVector3D &d)->std::optional<QPointF>{
+            const QVector4D q=projection*view*QVector4D(d,1);
+            if(q.w()<=0.001f)return {};
+            return QPointF((q.x()/q.w()+1.0f)*width()/2.0f,(1.0f-q.y()/q.w())*height()/2.0f);
+        };
+        const auto a=projectPoint(sphericalWarpStart_),b=projectPoint(sphericalWarpEnd_);
+        p.setPen(QPen(QColor(40,210,255),2,Qt::DashLine));
+        if(a&&b){p.drawLine(*a,*b);p.setBrush(QColor(40,210,255,55));p.drawEllipse(*a,6,6);p.setBrush(QColor(40,210,255,150));p.drawEllipse(*b,5,5);}
+        if(b){p.setPen(QPen(QColor(40,210,255),1));p.setBrush(Qt::NoBrush);p.drawEllipse(*b,brushRadius_*height()/std::max(1.0f,fov_),brushRadius_*height()/std::max(1.0f,fov_));}
+    }
+
     if (diagnosticDocument_==documentId_ && diagnosticRevision_==revision_ && !diagnosticMarks_.isEmpty()) {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
