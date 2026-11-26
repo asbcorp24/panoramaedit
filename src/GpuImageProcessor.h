@@ -34,6 +34,11 @@ public:
         float gradientOuter = 0.8f;
         float gradientStrength = 0.0f;
         float gradientWarmth = 0.0f;
+        bool panoramaAutoCorrection = false;
+        float whiteBalance[3] = {1.0f, 1.0f, 1.0f};
+        float sectorIllumination[16] = {1.0f};
+        float seamDelta[3] = {0.0f, 0.0f, 0.0f};
+        float seamWidth = 0.035f;
     };
 
     static bool applyGrade(const QImage &source, const QImage &mask,
