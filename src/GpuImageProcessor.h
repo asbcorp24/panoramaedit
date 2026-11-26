@@ -39,6 +39,9 @@ public:
         float sectorIllumination[16] = {1.0f};
         float seamDelta[3] = {0.0f, 0.0f, 0.0f};
         float seamWidth = 0.035f;
+        float hdrStrength = 0.0f;
+        float localContrast = 0.0f;
+        float detailStrength = 0.0f;
     };
 
     static bool applyGrade(const QImage &source, const QImage &mask,
