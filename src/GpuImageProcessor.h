@@ -42,6 +42,9 @@ public:
         float hdrStrength = 0.0f;
         float localContrast = 0.0f;
         float detailStrength = 0.0f;
+        float dehaze = 0.0f;
+        float clarity = 0.0f;
+        float texture = 0.0f;
     };
 
     static bool applyGrade(const QImage &source, const QImage &mask,
