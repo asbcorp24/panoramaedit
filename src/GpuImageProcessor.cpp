@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 
 namespace GpuImageProcessor {
 namespace {
