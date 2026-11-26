@@ -66,6 +66,8 @@ void SphereView::setMode(Mode mode) {
     if (mode == Mode::Straighten) emit statusMessage(tr("Отметьте минимум три точки линии по порядку, затем примените."));
     if (mode == Mode::MeshWarp) emit statusMessage(tr("Сетка: выберите центр, перетаскивайте внутренние узлы, затем примените."));
     if (mode == Mode::SphericalWarp) emit statusMessage(tr("Сферическая пластика: зажмите участок и потяните его. Радиус задаёт область влияния."));
+    if (mode == Mode::SphericalStretch) emit statusMessage(tr("Растягивание: ведите кисть вдоль направления, в котором нужно вытянуть участок. Соседние области плавно сохраняются."));
+    if (mode == Mode::SphericalCompress) emit statusMessage(tr("Сжатие: ведите кисть вдоль направления, в котором нужно собрать участок обратно."));
     roundCenter_.reset(); roundContour_.clear(); linePoints_.clear();
     if (mode == Mode::RoundObject) emit statusMessage(tr("Округление: щёлкните центр, затем точки контура; Enter — применить."));
     setCursor(mode == Mode::Navigate ? Qt::OpenHandCursor : Qt::CrossCursor);
