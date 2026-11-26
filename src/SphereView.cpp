@@ -1311,7 +1311,26 @@ void SphereView::localColorCorrection(){
     hasAiSelection_=false;update();
     int decision=dialog.exec();
     colorPreview_=false;
-    if(gpuPreview && decision==QDialog::Accepted)render();
+    if(decision==QDialog::Accepted){
+        bool gpuApplied=false;
+        QString gpuError;
+        if(gpuPreview && context() && isValid()){
+            GpuImageProcessor::Grade grade;
+            grade.brightness=sliders[0]->value()/100.f;
+            grade.contrast=sliders[1]->value()/100.f;
+            grade.saturation=sliders[2]->value()/100.f;
+            grade.temperature=sliders[3]->value()/100.f;
+            grade.shadows=sliders[4]->value()/100.f;
+            grade.highlights=sliders[5]->value()/100.f;
+            makeCurrent();
+            gpuApplied=GpuImageProcessor::applyGrade(original,mask,true,grade,&corrected,&gpuError,2048);
+            doneCurrent();
+        }
+        if(!gpuApplied){
+            render();
+            if(gpuPreview)emit statusMessage(tr("Локальная коррекция: CPU-режим (%1)").arg(gpuError));
+        }else emit statusMessage(tr("Локальная цветокоррекция обработана на GPU тайлами."));
+    }
     composite_=original;hasAiSelection_=showMask;fullTextureDirty_=true;
     if(decision==QDialog::Accepted && corrected!=original){
         pushUndo();
