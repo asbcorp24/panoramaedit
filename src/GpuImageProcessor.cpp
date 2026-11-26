@@ -36,6 +36,11 @@ uniform bool uGradientByLatitude;
 uniform vec4 uGradientCenter;
 uniform vec4 uGradientParams; // inner, outer, strength, warmth
 uniform vec4 uTileRect; // global UV offset and scale
+uniform bool uPanoramaAuto;
+uniform vec3 uWhiteBalance;
+uniform vec3 uSeamDelta;
+uniform float uSeamWidth;
+uniform float uSectorIllumination[16];
 const float PI = 3.14159265358979323846;
 void main() {
     vec2 globalUV = uTileRect.xy + vUV * uTileRect.zw;
@@ -51,6 +56,15 @@ void main() {
     z += uTone.z * 0.12 * vec3(1.0, 0.0, -1.0);
     z += uTone.w * 0.35 * (1.0 - l) * (1.0 - l);
     z += uChannels.w * 0.35 * l * l;
+    if (uPanoramaAuto) {
+        float sector = globalUV.x * 16.0;
+        int sectorIndex = int(floor(sector)) % 16;
+        float sectorMix = fract(sector);
+        float nextSector = uSectorIllumination[(sectorIndex + 1) % 16];
+        float illumination = mix(uSectorIllumination[sectorIndex], nextSector, sectorMix);
+        float edge = max(0.0, 1.0 - min(globalUV.x, 1.0 - globalUV.x) / max(0.001, uSeamWidth));
+        z = clamp(z * uWhiteBalance * illumination + uSeamDelta * edge, 0.0, 1.0);
+    }
     if (uSphericalGradient) {
         float longitude = (globalUV.x - 0.5) * 2.0 * PI;
         float latitude = (0.5 - globalUV.y) * PI;
@@ -177,6 +191,13 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
         grade.gradientCenterY, grade.gradientCenterZ, 0.0f));
     program.setUniformValue("uGradientParams", QVector4D(grade.gradientInner,
         grade.gradientOuter, grade.gradientStrength, grade.gradientWarmth));
+    program.setUniformValue("uPanoramaAuto", grade.panoramaAutoCorrection);
+    program.setUniformValue("uWhiteBalance", QVector3D(grade.whiteBalance[0],
+        grade.whiteBalance[1], grade.whiteBalance[2]));
+    program.setUniformValue("uSeamDelta", QVector3D(grade.seamDelta[0],
+        grade.seamDelta[1], grade.seamDelta[2]));
+    program.setUniformValue("uSeamWidth", grade.seamWidth);
+    program.setUniformValueArray("uSectorIllumination", grade.sectorIllumination, 16, 1);
 
     for (int y = 0; y < input.height(); y += tileEdge) {
         const int tileHeight = std::min(tileEdge, input.height() - y);
