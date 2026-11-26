@@ -45,6 +45,7 @@ uniform float uSectorIllumination[16];
 uniform vec4 uHdrLocal; // HDR strength, local contrast, detail, inner UV scale
 uniform vec2 uSourceUvOffset;
 uniform vec2 uSourceUvScale;
+uniform vec3 uDetailEffects;
 const float PI = 3.14159265358979323846;
 void main() {
     vec2 globalUV = uTileRect.xy + vUV * uTileRect.zw;
@@ -58,6 +59,7 @@ void main() {
     localLum += dot(texture(uSource, sourceUV + vec2(0,texel.y)).rgb,vec3(0.2126,0.7152,0.0722));
     localLum += dot(texture(uSource, sourceUV - vec2(0,texel.y)).rgb,vec3(0.2126,0.7152,0.0722));
     localLum *= 0.25;
+    float fineDetail = centerLum - localLum;
     vec3 rgb = original.rgb;
     vec3 z = pow(clamp((rgb - uLevels.x) /
                       max(0.004, uLevels.y - uLevels.x), 0.0, 1.0),
@@ -77,6 +79,16 @@ void main() {
     float localDelta = centerLum - localLum;
     z += vec3(localDelta * uHdrLocal.y * 2.0);
     z += (z - vec3(l)) * (uHdrLocal.z * 0.35);
+    float dehaze = clamp(uDetailEffects.x, -1.0, 1.0);
+    float dehazeLum = dot(z, vec3(0.2126,0.7152,0.0722));
+    z += (z - vec3(0.5)) * dehaze * 0.55;
+    z += vec3(-fineDetail * dehaze * 0.35);
+    z = mix(vec3(dehazeLum), z, clamp(1.0 + dehaze * 0.22, 0.0, 1.35));
+    float clarity = clamp(uDetailEffects.y, -1.0, 1.0);
+    z += vec3(fineDetail * clarity * 2.2);
+    float texture = clamp(uDetailEffects.z, -1.0, 1.0);
+    z += (original.rgb - vec3(centerLum)) * texture * 0.32;
+    z += vec3(fineDetail * texture * 1.4);
     if (uPanoramaAuto) {
         float sector = globalUV.x * 16.0;
         int sectorIndex = int(floor(sector)) % 16;
@@ -223,6 +235,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
         grade.localContrast, grade.detailStrength, 1.0f));
     program.setUniformValue("uSourceUvOffset", QVector2D(0.0f,0.0f));
     program.setUniformValue("uSourceUvScale", QVector2D(1.0f,1.0f));
+    program.setUniformValue("uDetailEffects", QVector3D(grade.dehaze,grade.clarity,grade.texture));
 
     for (int y = 0; y < input.height(); y += tileEdge) {
         const int tileHeight = std::min(tileEdge, input.height() - y);
