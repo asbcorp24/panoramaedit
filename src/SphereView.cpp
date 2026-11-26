@@ -633,11 +633,14 @@ void SphereView::paintAt(const QVector3D &direction) {
         return;
     }
     if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
-        mode_ == Mode::Bloat || mode_ == Mode::Pinch) {
+        mode_ == Mode::Bloat || mode_ == Mode::Pinch ||
+        mode_ == Mode::SphericalStretch || mode_ == Mode::SphericalCompress) {
         SphericalLiquify::Tool tool = SphericalLiquify::Tool::Smudge;
         if (mode_ == Mode::Push) tool = SphericalLiquify::Tool::Push;
         if (mode_ == Mode::Bloat) tool = SphericalLiquify::Tool::Bloat;
         if (mode_ == Mode::Pinch) tool = SphericalLiquify::Tool::Pinch;
+        if (mode_ == Mode::SphericalStretch) tool = SphericalLiquify::Tool::Stretch;
+        if (mode_ == Mode::SphericalCompress) tool = SphericalLiquify::Tool::Compress;
         const QVector3D previous = lastStroke_.value_or(direction);
         const QRegion region = SphericalLiquify::apply(editLayer_, composite_,
             composite_, direction, previous, brushRadius_, toolStrength_, tool);
@@ -673,7 +676,8 @@ void SphereView::strokeBetween(const QVector3D &a, const QVector3D &b) {
     for (int i = 1; i <= steps; ++i) {
         const float t = float(i) / steps;
         // Normalized interpolation is accurate for short mouse-move segments.
-        if (mode_ == Mode::Smudge || mode_ == Mode::Push) {
+        if (mode_ == Mode::Smudge || mode_ == Mode::Push ||
+            mode_ == Mode::SphericalStretch || mode_ == Mode::SphericalCompress) {
             const float prevT = float(i - 1) / steps;
             lastStroke_ = ((1 - prevT) * a + prevT * b).normalized();
         }
@@ -765,7 +769,8 @@ void SphereView::mousePressEvent(QMouseEvent *event) {
             cloneSnapshot_ = composite_;
             cloneRotation_ = QQuaternion::rotationTo(*lastStroke_, *cloneSource_);
         }
-        if (mode_ != Mode::Smudge && mode_ != Mode::Push)
+        if (mode_ != Mode::Smudge && mode_ != Mode::Push &&
+            mode_ != Mode::SphericalStretch && mode_ != Mode::SphericalCompress)
             paintAt(*lastStroke_);
     } else dragging_ = true;
     event->accept();
