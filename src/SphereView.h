@@ -21,7 +21,7 @@ class QEnterEvent;
 class SphereView final : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
     Q_OBJECT
 public:
-    enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch,
+    enum class Mode { Navigate, Brush, Eraser, CloneStamp, Smudge, Push, Bloat, Pinch, SphericalWarp,
                       AiSharpen, AiInpaint, RoundObject, MeshWarp, Straighten, SmartSelect };
     explicit SphereView(QWidget *parent = nullptr);
     ~SphereView() override;
@@ -159,6 +159,9 @@ private:
     QPoint lastMouse_;
     bool dragging_ = false;
     bool painting_ = false;
+    bool sphericalWarpDragging_ = false;
+    QVector3D sphericalWarpStart_;
+    QVector3D sphericalWarpEnd_;
     std::optional<QVector3D> lastStroke_;
     std::optional<QVector3D> cloneSource_;
     QQuaternion cloneRotation_;
