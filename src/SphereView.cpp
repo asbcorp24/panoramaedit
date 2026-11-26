@@ -1315,7 +1315,7 @@ void SphereView::localColorCorrection(){
         bool gpuApplied=false;
         QString gpuError;
         if(gpuPreview && context() && isValid()){
-            GpuImageProcessor::Grade grade;
+            GpuImageProcessor::GpuImageProcessor::Grade grade;
             grade.brightness=sliders[0]->value()/100.f;
             grade.contrast=sliders[1]->value()/100.f;
             grade.saturation=sliders[2]->value()/100.f;
@@ -1323,7 +1323,7 @@ void SphereView::localColorCorrection(){
             grade.shadows=sliders[4]->value()/100.f;
             grade.highlights=sliders[5]->value()/100.f;
             makeCurrent();
-            gpuApplied=GpuImageProcessor::applyGrade(original,mask,true,grade,&corrected,&gpuError,2048);
+            gpuApplied=GpuImageProcessor::GpuImageProcessor::applyGrade(original,mask,true,grade,&corrected,&gpuError,2048);
             doneCurrent();
         }
         if(!gpuApplied){
@@ -1663,7 +1663,7 @@ void SphereView::colorGrading(){
     composite_=original;hasAiSelection_=selected;fullTextureDirty_=true;
     if(decision==QDialog::Accepted){
         QImage result;
-        GpuImageProcessor::Grade gpuGrade;
+        GpuImageProcessor::GpuImageProcessor::Grade gpuGrade;
         gpuGrade.blackPoint=grading_[0];
         gpuGrade.whitePoint=grading_[1];
         gpuGrade.gamma=grading_[2];
