@@ -150,6 +150,8 @@ if(BUILD_TESTING)
         src/SphericalAI.cpp
         src/SphericalRaster.h
         src/SphericalRaster.cpp
+        src/GpuImageProcessor.h
+        src/GpuImageProcessor.cpp
     )
     target_link_libraries(PanoramaEditPaletteTests PRIVATE
         Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets Qt6::Concurrent)
