@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <vector>
 #include <QPainter>
+#include <QLineF>
 
 namespace {
 constexpr float PI = 3.14159265358979323846f;
@@ -64,7 +65,7 @@ void SphereView::setMode(Mode mode) {
     resetMesh();
     mode_ = mode;
     if (mode == Mode::Straighten) emit statusMessage(tr("Отметьте минимум три точки линии по порядку, затем примените."));
-    if (mode == Mode::MeshWarp) emit statusMessage(tr("Сетка: выберите центр, перетаскивайте внутренние узлы, затем примените."));
+    if (mode == Mode::MeshWarp) emit statusMessage(tr("Сферическая сетка: щёлкните центр области, затем перетаскивайте голубые узлы. Угловые точки закреплены. Геометрия → Применить сетку — сохранить результат; Сбросить сетку — отменить."));
     if (mode == Mode::SphericalWarp) emit statusMessage(tr("Сферическая пластика: зажмите участок и потяните его. Радиус задаёт область влияния."));
     if (mode == Mode::SphericalStretch) emit statusMessage(tr("Растягивание: ведите кисть вдоль направления, в котором нужно вытянуть участок. Соседние области плавно сохраняются."));
     if (mode == Mode::SphericalCompress) emit statusMessage(tr("Сжатие: ведите кисть вдоль направления, в котором нужно собрать участок обратно."));
