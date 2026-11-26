@@ -155,7 +155,7 @@ bool GpuImageProcessor::applyGrade(const QImage &source, const QImage &mask,
     QOpenGLContext *context = QOpenGLContext::currentContext();
     if (!context)
         return fail(QStringLiteral("Нет активного OpenGL-контекста."));
-    if (!context->format().version() || context->format().majorVersion() < 3 ||
+    if (context->format().majorVersion() < 3 ||
         (context->format().majorVersion() == 3 && context->format().minorVersion() < 3))
         return fail(QStringLiteral("Требуется OpenGL 3.3 или новее."));
 
