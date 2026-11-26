@@ -1,3 +1,7 @@
+#include <QComboBox>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <array>
 #include <QOpenGLFramebufferObject>
 #include <QSignalBlocker>
 #include <QLabel>
@@ -244,6 +248,8 @@ uniform sampler2D uPanorama;
 uniform sampler2D uMask;
 uniform bool uShowMask;
 uniform bool uColorPreview;
+uniform bool uGrading, uGradingMasked;
+uniform float uGrade[12];
 uniform bool uLevelPreview;
 uniform bool uPoleStretchPreview;
 uniform float uPoleStretch;
@@ -279,6 +285,16 @@ void main() {
     float v = 0.5 - asin(clamp(sampleD.y, -1.0, 1.0)) / PI;
     if(uPoleStretchPreview){v+=uPoleStretch;if(v<0.0 || v>1.0){fragColor=vec4(0.12,0.12,0.12,1);return;}}
     fragColor = texture(uPanorama, vec2(u, v));
+    if(uGrading){
+        vec3 rgb=fragColor.rgb;
+        vec3 z=pow(clamp((rgb-uGrade[0])/max(0.004,uGrade[1]-uGrade[0]),0.0,1.0),vec3(1.0/uGrade[2]));
+        float l=dot(z,vec3(0.2126,0.7152,0.0722));
+        z=(z-l)*(1.0+uGrade[5])+l;
+        z=(z-0.5)*(1.0+uGrade[4])+0.5+uGrade[3]*0.25;
+        z+=vec3(uGrade[7],uGrade[8],uGrade[9])*0.2+uGrade[6]*0.12*vec3(1,0,-1);
+        z+=uGrade[10]*0.35*(1.0-l)*(1.0-l)+uGrade[11]*0.35*l*l;
+        fragColor.rgb=mix(rgb,clamp(z,0.0,1.0),uGradingMasked?texture(uMask,vec2(u,v)).r:1.0);
+    }
     if (uColorPreview) {
         vec3 rgb=fragColor.rgb;
         float lum=dot(rgb,vec3(0.2126,0.7152,0.0722));
@@ -437,6 +453,9 @@ void SphereView::paintGL() {
     }
     shader_->setUniformValue("uMask", 1);
     shader_->setUniformValue("uColorPreview",colorPreview_);
+    shader_->setUniformValue("uGrading",gradingPreview_);
+    shader_->setUniformValue("uGradingMasked",gradingMasked_);
+    shader_->setUniformValueArray("uGrade",grading_,12,1);
     shader_->setUniformValue("uLevelPreview",levelPreview_);
     shader_->setUniformValue("uPoleStretchPreview",poleStretchPreview_);
     shader_->setUniformValue("uPoleStretch",poleStretch_);
@@ -1482,4 +1501,110 @@ void main(){
         update();
     });
     dialog->show();
+}
+
+void SphereView::colorGrading(){
+    if(!hasImage()||levelPreview_||poleStretchPreview_||gradingPreview_)return;
+    const QImage original=composite_,mask=aiMask_;
+    const bool selected=hasAiSelection_&&!mask.isNull();
+    ++selectionRequest_;
+    QDialog dialog(this);dialog.setWindowTitle(tr("Цветокоррекция и уровни"));
+    auto *layout=new QFormLayout(&dialog);
+    auto *scope=new QCheckBox(tr("Только выделенная область"),&dialog);
+    scope->setEnabled(selected);scope->setChecked(selected);layout->addRow(scope);
+    auto *preset=new QComboBox(&dialog);
+    preset->addItems({tr("Нейтральный"),tr("Естественный"),tr("HDR-стиль"),tr("Тёплый"),tr("Холодный"),tr("Кино"),tr("Зимний"),tr("Винтаж"),tr("Чёрно-белый")});
+    layout->addRow(tr("Пресет"),preset);
+    auto *hist=new QLabel(&dialog);hist->setMinimumSize(256,85);layout->addRow(hist);
+    QSlider *sl[12];
+    const QString names[]={tr("Чёрная точка"),tr("Белая точка"),tr("Гамма ×100"),tr("Яркость"),tr("Контраст"),tr("Насыщенность"),tr("Температура"),tr("Красный"),tr("Зелёный"),tr("Синий"),tr("Тени"),tr("Света")};
+    const int defaults[]={0,255,100,0,0,0,0,0,0,0,0,0};
+    for(int i=0;i<12;++i){
+        sl[i]=new QSlider(Qt::Horizontal,&dialog);
+        sl[i]->setRange(i<2?0:i==2?10:-100,i<2?255:i==2?300:100);
+        sl[i]->setValue(defaults[i]);layout->addRow(names[i],sl[i]);
+    }
+    auto *autoButton=new QPushButton(tr("Автоуровни"),&dialog);layout->addRow(autoButton);
+    auto *reset=new QPushButton(tr("Сбросить"),&dialog);layout->addRow(reset);
+    auto *before=new QCheckBox(tr("Показать оригинал"),&dialog);layout->addRow(before);
+    auto *buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addRow(buttons);
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    std::array<double,256> bins{};
+    auto histogram=[&]{
+        bins.fill(0);
+        const int step=std::max(1,original.width()/2048);
+        for(int y=0;y<original.height();y+=step){
+            double area=std::sin(PI*(y+0.5)/original.height());
+            for(int x=0;x<original.width();x+=step){
+                double w=area*(scope->isChecked()?mask.constScanLine(y)[x]/255.0:1.0);
+                auto c=original.pixelColor(x,y);
+                int l=qBound(0,qRound(0.2126*c.red()+0.7152*c.green()+0.0722*c.blue()),255);
+                bins[l]+=w;
+            }
+        }
+        QPixmap pm(256,85);pm.fill(QColor(35,35,35));QPainter p(&pm);
+        p.setPen(QColor(180,200,220));double peak=*std::max_element(bins.begin(),bins.end());
+        if(peak>0)for(int x=0;x<256;++x)p.drawLine(x,84,x,84-int(80*std::sqrt(bins[x]/peak)));
+        p.end();hist->setPixmap(pm);
+    };
+    auto values=[&]{
+        grading_[0]=sl[0]->value()/255.f;
+        grading_[1]=std::max(sl[0]->value()+1,sl[1]->value())/255.f;
+        for(int i=2;i<12;++i)grading_[i]=sl[i]->value()/100.f;
+        gradingMasked_=scope->isChecked();
+    };
+    auto render=[&]{
+        QImage out=original;
+        for(int y=0;y<out.height();++y)for(int x=0;x<out.width();++x){
+            float w=gradingMasked_?mask.constScanLine(y)[x]/255.f:1.f;if(w<=0)continue;
+            auto c=original.pixelColor(x,y);float rgb[]={float(c.redF()),float(c.greenF()),float(c.blueF())},z[3];
+            for(int k=0;k<3;++k)z[k]=std::pow(std::clamp((rgb[k]-grading_[0])/std::max(0.004f,grading_[1]-grading_[0]),0.f,1.f),1.f/grading_[2]);
+            float l=.2126f*z[0]+.7152f*z[1]+.0722f*z[2];
+            for(int k=0;k<3;++k){
+                z[k]=(z[k]-l)*(1+grading_[5])+l;
+                z[k]=(z[k]-.5f)*(1+grading_[4])+.5f+grading_[3]*.25f;
+                z[k]+=grading_[7+k]*.2f+grading_[6]*.12f*(1-k)+grading_[10]*.35f*(1-l)*(1-l)+grading_[11]*.35f*l*l;
+                z[k]=rgb[k]+w*(std::clamp(z[k],0.f,1.f)-rgb[k]);
+            }
+            out.setPixelColor(x,y,QColor::fromRgbF(z[0],z[1],z[2],c.alphaF()));
+        }
+        return out;
+    };
+    const bool gpu=isValid()&&shader_&&shader_->isLinked();
+    auto preview=[&]{values();gradingPreview_=gpu&&!before->isChecked();if(!gpu){composite_=before->isChecked()?original:render();fullTextureDirty_=true;}update();};
+    auto applyPreset=[&](int n){
+        const int presets[9][12]={
+            {0,255,100,0,0,0,0,0,0,0,0,0},
+            {3,250,105,0,8,8,0,0,0,0,5,-3},
+            {0,255,105,0,18,18,0,0,0,0,40,-25},
+            {0,255,105,0,5,10,35,5,0,0,0,0},
+            {0,255,100,0,8,5,-35,0,0,5,0,0},
+            {5,250,95,0,18,-15,-10,8,0,8,12,-10},
+            {0,250,110,5,5,-12,-25,0,0,5,5,0},
+            {0,255,110,0,-20,-35,25,8,3,-5,10,-5},
+            {0,255,100,0,10,-100,0,0,0,0,0,0}};
+        for(int i=0;i<12;++i){QSignalBlocker b(sl[i]);sl[i]->setValue(presets[n][i]);}preview();
+    };
+    for(auto *s:sl)connect(s,&QSlider::valueChanged,&dialog,[&](int){preview();});
+    connect(preset,&QComboBox::currentIndexChanged,&dialog,[&](int n){applyPreset(n);});
+    connect(reset,&QPushButton::clicked,&dialog,[&]{QSignalBlocker b(preset);preset->setCurrentIndex(0);applyPreset(0);});
+    connect(scope,&QCheckBox::toggled,&dialog,[&](bool){histogram();preview();});
+    connect(before,&QCheckBox::toggled,&dialog,[&](bool){preview();});
+    connect(autoButton,&QPushButton::clicked,&dialog,[&]{
+        double total=0;for(double b:bins)total+=b;if(total<=0)return;
+        int lo=0,hi=255;double sum=0;
+        while(lo<255&&sum+bins[lo]<total*.005)sum+=bins[lo++];
+        sum=0;while(hi>0&&sum+bins[hi]<total*.005)sum+=bins[hi--];
+        if(hi-lo<4)return;
+        {QSignalBlocker a(sl[0]),b(sl[1]),c(sl[2]);sl[0]->setValue(lo);sl[1]->setValue(hi);sl[2]->setValue(100);}preview();
+    });
+    hasAiSelection_=false;histogram();preview();
+    int decision=dialog.exec();gradingPreview_=false;values();
+    composite_=original;hasAiSelection_=selected;fullTextureDirty_=true;
+    if(decision==QDialog::Accepted){
+        QImage result=render();
+        if(result!=original){pushUndo();editLayer_=result;composite_=result;revision_=nextRevision_++;setModified(revision_!=savedRevision_);clearDiagnostics();}
+    }
+    update();
 }
